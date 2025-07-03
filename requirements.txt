@@ -1,0 +1,8 @@
+langchain
+pyyaml
+ollama
+langchain-community
+langchain-core
+langchain-ollama
+networkx
+web3

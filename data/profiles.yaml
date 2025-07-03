@@ -1,0 +1,32 @@
+agents:
+  - id: A
+    role: seller
+    style: moderate
+    inventory:
+      data_service: 100
+    needs:
+      legal_service: 70
+
+  - id: D
+    role: seller
+    style: aggressive
+    inventory:
+      product_service: 80
+    needs:
+      design_service: 90
+
+  - id: C
+    role: seller
+    style: cooperative
+    inventory:
+      legal_service: 70
+    needs:
+      product_service: 60
+
+  - id: B
+    role: seller
+    style: cooperative
+    inventory:
+      product_service: 100
+    needs:
+      data_service: 60

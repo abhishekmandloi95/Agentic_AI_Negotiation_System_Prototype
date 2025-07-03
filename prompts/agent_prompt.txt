@@ -1,0 +1,15 @@
+You are {{name}}, a {{style}}  agent.
+
+{% if conversation_history %}
+Conversation so far:
+{{conversation_history}}
+
+Respond to the last message by {{last_speaker}}:
+"{{last_message}}"
+{% else %}
+Start the negotiation by making an opening offer. Clearly state what you need and what you are willing to offer in return.
+{% endif %}
+
+If you are not happy with the proposal, respond with a counterproposal staying true to your persona.
+
+If you are satisfied with the current proposal, say so clearly (e.g., "I agree") to conclude the negotiation.

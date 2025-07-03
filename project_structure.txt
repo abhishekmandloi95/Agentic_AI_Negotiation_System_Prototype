@@ -1,0 +1,53 @@
+.
+├── agents
+│   ├── __pycache__
+│   │   ├── base_agent.cpython-313.pyc
+│   │   ├── buyer_agent.cpython-313.pyc
+│   │   └── seller_agent.cpython-313.pyc
+│   ├── base_agent.py
+│   ├── buyer_agent.py
+│   └── seller_agent.py
+├── data
+│   ├── buyer_profiles.yaml
+│   ├── profiles.yaml
+│   └── seller_profiles.yaml
+├── main.py
+├── negotiation
+│   ├── __pycache__
+│   │   └── protocol.cpython-313.pyc
+│   └── protocol.py
+├── project_structure.txt
+├── requirements.txt
+├── simulator
+├── ui
+│   └── app.py
+└── venv
+    ├── bin
+    │   ├── activate
+    │   ├── activate.csh
+    │   ├── activate.fish
+    │   ├── Activate.ps1
+    │   ├── f2py
+    │   ├── jsonschema
+    │   ├── normalizer
+    │   ├── numpy-config
+    │   ├── pip
+    │   ├── pip 2
+    │   ├── pip3
+    │   ├── pip3.13
+    │   ├── python -> python3.13
+    │   ├── python3 -> python3.13
+    │   ├── python3.13 -> /opt/homebrew/opt/python@3.13/bin/python3.13
+    │   ├── streamlit
+    │   └── streamlit.cmd
+    ├── etc
+    │   └── jupyter
+    ├── include
+    │   └── python3.13
+    ├── lib
+    │   └── python3.13
+    ├── pyvenv.cfg
+    └── share
+        └── jupyter
+
+18 directories, 33 files
