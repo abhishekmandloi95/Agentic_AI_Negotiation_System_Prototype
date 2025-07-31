@@ -1,32 +1,63 @@
 agents:
   - id: A
-    role: seller
     style: moderate
     inventory:
       data_service: 100
     needs:
       legal_service: 70
 
-  - id: D
-    role: seller
-    style: aggressive
+  - id: B
+    style: cooperative
     inventory:
-      product_service: 80
+      product_service: 100
     needs:
-      design_service: 90
+      data_service: 60
 
   - id: C
-    role: seller
     style: cooperative
     inventory:
       legal_service: 70
     needs:
       product_service: 60
 
-  - id: B
-    role: seller
+  - id: D
+    style: aggressive
+    inventory:
+      design_service: 90
+    needs:
+      data_service: 50
+
+  - id: E
+    style: moderate
+    inventory:
+      ux_research: 40
+    needs:
+      design_service: 60
+
+  - id: F
     style: cooperative
     inventory:
-      product_service: 100
+      design_service: 50
     needs:
-      data_service: 60
+      data_service: 30
+
+  - id: G
+    style: strategic
+    inventory:
+      data_service: 30
+    needs:
+      ux_research: 30
+
+  - id: H
+    style: aggressive
+    inventory:
+      market_insights: 80
+    needs:
+      design_service: 40
+  
+  - id: I
+    style: moderate
+    inventory:
+      design_service: 60
+    needs:
+     market_insights: 30

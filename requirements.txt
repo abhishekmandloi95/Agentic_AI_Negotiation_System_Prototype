@@ -6,3 +6,5 @@ langchain-core
 langchain-ollama
 networkx
 web3
+py-solc-x
+streamlit
