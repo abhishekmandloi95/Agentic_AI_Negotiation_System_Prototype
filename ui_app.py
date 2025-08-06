@@ -50,12 +50,13 @@ mode = st.radio("Select Negotiation Mode:", ["Run each loop separately", "Run on
 n_rounds     = st.slider("How many bilateral rounds?", 1, len(agent_ids), len(agent_ids))
 max_loop_len = st.slider("Max agents in a loop?",    2, len(agent_ids), len(agent_ids))
 
+max_bilateral_rounds = n_rounds
+
 if st.button("Start Negotiation"):
     agents_by_id = build_agents_by_id(agent_profiles)
     agents = list(agents_by_id.values())
     
     if mode == "Run each loop separately":
-        # loops = find_trade_loops(agents)
         loops = find_trade_loops(agents, max_cycle_length=max_loop_len)
         if not loops:
             st.error("No valid negotiation loops found.")
@@ -69,15 +70,12 @@ if st.button("Start Negotiation"):
                  st.success(f"Running negotiation for loop: {cycle_banner}")
  
                  # 3) run negotiation *only* among those agents
-                #  conversation = run_negotiation_simulation(
-                #      ids_in_loop,
-                #      "data/profiles.yaml"
-                #  )
                  conversation = run_negotiation_simulation(
                  ids_in_loop,
                  "data/profiles.yaml",
                  rounds=n_rounds, 
-                 max_cycle_length=max_loop_len
+                 max_cycle_length=max_loop_len,
+                 max_bilateral_rounds=max_bilateral_rounds
                  )
                  for line in conversation:
                      st.markdown(line)
@@ -85,12 +83,13 @@ if st.button("Start Negotiation"):
     else:
         # Run one large negotiation
         st.success("Running one large negotiation with all agents.")
-        # conversation = run_negotiation_simulation([], "data/profiles.yaml")
+        
         conversation = run_negotiation_simulation(
              [], 
              "data/profiles.yaml",
              rounds=n_rounds,
-             max_cycle_length=max_loop_len
+             max_cycle_length=max_loop_len,
+             max_bilateral_rounds=max_bilateral_rounds
          )
         for line in conversation:
             st.markdown(line)
@@ -114,5 +113,4 @@ with st.expander("🛠️ Manually Select Agents"):
 if DEPLOY_LOGS:
     st.subheader("Contracts deployed in this run")
     for addr, human in DEPLOY_LOGS.items():
-        # st.code(human, language="") # shows the readable line only
         st.code(f"{human}   ({addr})") #shows the address as well

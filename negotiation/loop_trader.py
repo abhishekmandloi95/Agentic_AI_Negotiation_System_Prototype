@@ -89,12 +89,31 @@ def execute_loop(loop, id_map):
 
 # --- Integration into your engine ---
 
-def detect_and_execute_loops(agents, max_cycle_length=None):
-    id_map = {a.agent_id: a for a in agents}
-    loops = find_trade_loops(agents, max_cycle_length)
-    executed = []
-    for loop in loops:
+def detect_and_execute_loops(agents, max_cycle_length=None, confirmed_pairs=None):
+    loops = []
+    found_loops = find_trade_loops(agents, max_cycle_length)
+    id_map = {a.agent_id: a for a in agents}  # ✅ define id_map once
+
+    for loop in found_loops:
+        loop_pairs = [tuple(sorted([f, t])) for f, t, _ in loop]
+
+        # Check confirmation if required
+        if confirmed_pairs is not None:
+            missing = [p for p in loop_pairs if p not in confirmed_pairs]
+        else:
+            missing = []
+
+        if missing:
+            reason = f"[Loop invalid: missing confirmations for {missing}]"
+            loops.append((loop, 0, reason))  # ✅ keep reason for UI display
+            continue
+
         qty = execute_loop(loop, id_map)
-        executed.append((loop, qty))
-        # you could deploy smart-contract here for the multi-party agreement
-    return executed
+        if qty <= 0:
+            reason = "[Loop invalid: no transferable quantity available]"
+            loops.append((loop, 0, reason))  # ✅ keep reason for UI display
+            continue
+
+        loops.append((loop, qty))  # No reason for valid loops
+
+    return loops

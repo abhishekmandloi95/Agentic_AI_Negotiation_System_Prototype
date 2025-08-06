@@ -56,7 +56,7 @@ agents:
       design_service: 40
   
   - id: I
-    style: moderate
+    style: tit for tat
     inventory:
       design_service: 60
     needs:

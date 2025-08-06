@@ -26,47 +26,56 @@ class LLMNegotiationAgent:
         )
         self.chain = self.prompt_template | self.llm
 
-    def open_negotiation(self, partner_agent):
+    def open_negotiation(self, partner, max_rounds=None):
         """
         Kick off a negotiation: no prior message or history.
         """
+
+        valid_services = list(set(self.inventory.keys()) | set(partner.inventory.keys()))
+        
         input_data = {
             "name": self.agent_id,
             "style": self.style,
             "inventory": ", ".join(f"{k}: {v}" for k, v in self.inventory.items()),
             "needs": ", ".join(f"{k}: {v}" for k, v in self.needs.items()),
-            "partner_name": partner_agent.agent_id,
+            "partner_name": partner.agent_id,
             "partner_inventory": ", ".join(
-                f"{k}: {v}" for k, v in partner_agent.inventory.items()
+                f"{k}: {v}" for k, v in partner.inventory.items()
             ),
             "partner_needs": ", ".join(
-                f"{k}: {v}" for k, v in partner_agent.needs.items()
+                f"{k}: {v}" for k, v in partner.needs.items()
             ),
             "last_message": "",
             "last_speaker": "",
-            "conversation_history": ""
+            "conversation_history": "",
+            "max_rounds": max_rounds,
+            "valid_services": valid_services,
         }
         return self.chain.invoke(input_data)
 
-    def respond(self, partner_agent, last_message, conversation_history, last_speaker):
+    def respond(self, partner, last_message, conversation_history, last_speaker, max_rounds=None):
         """
         Given the partner’s last message, produce a reply.
         """
+        valid_services = list(set(self.inventory.keys()) | set(partner.inventory.keys()))
+
         input_data = {
             "name": self.agent_id,
             "style": self.style,
             "inventory": ", ".join(f"{k}: {v}" for k, v in self.inventory.items()),
             "needs": ", ".join(f"{k}: {v}" for k, v in self.needs.items()),
-            "partner_name": partner_agent.agent_id,
+            "partner_name": partner.agent_id,
             "partner_inventory": ", ".join(
-                f"{k}: {v}" for k, v in partner_agent.inventory.items()
+                f"{k}: {v}" for k, v in partner.inventory.items()
             ),
             "partner_needs": ", ".join(
-                f"{k}: {v}" for k, v in partner_agent.needs.items()
+                f"{k}: {v}" for k, v in partner.needs.items()
             ),
             "last_message": last_message,
             "last_speaker": last_speaker,
             "conversation_history": "\n".join(conversation_history),
+            "max_rounds": max_rounds,
+            "valid_services": valid_services,
         }
         return self.chain.invoke(input_data)
 
