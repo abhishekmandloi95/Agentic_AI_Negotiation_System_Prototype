@@ -19,15 +19,21 @@ def _dfs_cycles(graph, start, current, visited, path, loops, max_len=None):
 
     for (nbr, res) in graph[current]:
         if nbr == start and len(path) >= 1:
-            # Found a cycle: record path + this edge
+            # -- enforce max_len on the closing edge too --
+            if max_len and (len(path) + 1) > max_len:
+                continue
             loops.append(path + [(current, nbr, res)])
         elif nbr not in visited:
+            # -- pre-check to avoid recursing into overlength paths --
+            if max_len and (len(path) + 1) > max_len:
+                continue
             _dfs_cycles(
                 graph, start, nbr,
                 visited | {nbr},
                 path + [(current, nbr, res)],
                 loops, max_len
             )
+
 
 def find_trade_loops(agents, max_cycle_length=None):
 
@@ -39,13 +45,15 @@ def find_trade_loops(agents, max_cycle_length=None):
     seen = set()
     unique_loops = []
     for loop in loops:
-        # build all rotations of this loop
         n = len(loop)
-        rotations = [ tuple(loop[i:]+loop[:i]) for i in range(n) ]
-        canon = min(rotations)
+        # rotations (forward)
+        rotations_fwd = [tuple(loop[i:] + loop[:i]) for i in range(n)]
+        # rotations (reversed): reverse order AND swap (from,to) for each edge
+        rev = [(to, frm, res) for (frm, to, res) in reversed(loop)]
+        rotations_rev = [tuple(rev[i:] + rev[:i]) for i in range(n)]
+        canon = min(rotations_fwd + rotations_rev)
         if canon not in seen:
             seen.add(canon)
-         # restore as a list of edges
             unique_loops.append(list(canon))
     return unique_loops
 
@@ -104,7 +112,7 @@ def detect_and_execute_loops(agents, max_cycle_length=None, confirmed_pairs=None
             missing = []
 
         if missing:
-            reason = f"[Loop invalid: missing confirmations for {missing}]"
+            reason = f"[Loop invalid: missing verbal confirmations for {missing}. Loop aborted to prevent unfair trades]"
             loops.append((loop, 0, reason))  # ✅ keep reason for UI display
             continue
 

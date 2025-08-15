@@ -4,60 +4,60 @@ agents:
     inventory:
       data_service: 100
     needs:
-      legal_service: 70
+      legal_service: 80
 
   - id: B
     style: cooperative
     inventory:
       product_service: 100
     needs:
-      data_service: 60
+      data_service: 70
 
   - id: C
     style: cooperative
     inventory:
-      legal_service: 70
+      legal_service: 100
     needs:
-      product_service: 60
+      product_service: 70
 
   - id: D
     style: aggressive
     inventory:
       design_service: 90
     needs:
-      data_service: 50
+      data_service: 60
 
   - id: E
     style: moderate
     inventory:
-      ux_research: 40
+      ux_research: 60
     needs:
-      design_service: 60
+      design_service: 70
 
   - id: F
     style: cooperative
     inventory:
-      design_service: 50
+      design_service: 70
     needs:
-      data_service: 30
+      data_service: 40
 
   - id: G
     style: strategic
     inventory:
-      data_service: 30
+      data_service: 50
     needs:
-      ux_research: 30
+      ux_research: 40
 
   - id: H
     style: aggressive
     inventory:
       market_insights: 80
     needs:
-      design_service: 40
+      design_service: 50
   
   - id: I
     style: tit for tat
     inventory:
       design_service: 60
     needs:
-     market_insights: 30
+      market_insights: 40

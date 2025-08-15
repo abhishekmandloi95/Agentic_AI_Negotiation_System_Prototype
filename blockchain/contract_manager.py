@@ -1,5 +1,7 @@
 import json
+from utils.history_store import save_trade_to_history
 from web3 import Web3
+import streamlit as st
 
 GANACHE_URL = "http://127.0.0.1:7545"
 
@@ -54,5 +56,31 @@ def deploy_contract(
 
     print(f"Smart contract deployed at {address} | {human}")
     DEPLOY_LOGS[address] = human           # <- human text for UI
+
+    save_trade_to_history({
+    "contract_address": address,
+    "initiator": party_from,
+    "responder": party_to,
+    "service_given": service_given,
+    "service_received": service_received,
+    "quantity_given": qty_given,
+    "quantity_received": qty_received
+    })
+
+    try:
+        if "current_contracts" not in st.session_state:
+            st.session_state.current_contracts = []
+
+        st.session_state.current_contracts.append({
+            "contract_address": address,
+            "initiator": party_from,
+            "responder": party_to,
+            "service_given": service_given,
+            "service_received": service_received,
+            "quantity_given": qty_given,
+            "quantity_received": qty_received
+        })
+    except Exception as e:
+        print("Warning: Could not update Streamlit session state. Reason:", e)
 
     return address

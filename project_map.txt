@@ -1,0 +1,30 @@
+.
+├── agents
+│   └── base_agent.py
+├── blockchain
+│   ├── compile_contract.py
+│   ├── contract_manager.py
+│   ├── TradeAgreement.json
+│   └── TradeAgreement.sol
+├── data
+│   └── profiles.yaml
+├── market
+│   ├── __init__.py
+│   ├── forecaster.py
+│   ├── insights.py
+│   ├── schemas.py
+│   ├── service.py
+│   └── simulator.py
+├── negotiation
+│   ├── loop_trader.py
+│   ├── protocol.py
+│   └── rag_memory.py
+├── project_map.txt
+├── project_structure.txt
+├── prompts
+│   └── agent_prompt.txt
+├── requirements.txt
+├── simulator
+└── ui_app.py
+
+8 directories, 20 files

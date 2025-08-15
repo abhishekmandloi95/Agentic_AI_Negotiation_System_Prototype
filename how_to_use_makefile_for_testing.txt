@@ -1,0 +1,4 @@
+make test-fast     # unit tests only (market/prophet + rag if lightweight)
+make test-ganache  # only tests that need Ganache (requires Ganache running)
+make test-rag      # only RAG tests (skips if deps missing)
+make test-all      # everything, including Ganache tests
