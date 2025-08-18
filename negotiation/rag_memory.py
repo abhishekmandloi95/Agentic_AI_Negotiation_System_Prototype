@@ -49,3 +49,9 @@ class NegotiationRAGMemory:
 
         D, I = idx.search(q_emb, k)  # I shape (1, k)
         return [snippets[i] for i in I[0] if i != -1 and 0 <= i < len(snippets)]
+
+def chunk_conversation(text, chunk_size=100, overlap=20):
+    chunks = []
+    for i in range(0, len(text), chunk_size - overlap):
+        chunks.append(text[i:i + chunk_size])
+    return chunks

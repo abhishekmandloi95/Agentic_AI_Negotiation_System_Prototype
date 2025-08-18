@@ -18,3 +18,12 @@ def test_add_and_retrieve_per_pair():
 
     res_ac = rag.retrieve("A", "C", "data service", top_k=1)
     assert any("data_service" in s for s in res_ac)
+
+def test_chunking_long_message_overlap():
+    from negotiation.rag_memory import chunk_conversation
+    long_msg = "This is a very long message " * 50
+    chunks = chunk_conversation(long_msg, chunk_size=100, overlap=20)
+
+    assert all(len(c) <= 100 for c in chunks)
+    assert len(chunks) > 1
+    assert any(chunks[i][-20:] == chunks[i+1][:20] for i in range(len(chunks)-1))

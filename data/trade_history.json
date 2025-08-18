@@ -493,5 +493,23 @@
     "service_received": "design_service",
     "quantity_given": 20,
     "quantity_received": 20
+  },
+  {
+    "contract_address": "0xc33cd49a33fb130847876aD633D815e94e1c6c59",
+    "initiator": "0xaFE90d1Fb07f11b0541e60f618a12ce0DeB18b08",
+    "responder": "0xaFE90d1Fb07f11b0541e60f618a12ce0DeB18b08",
+    "service_given": "data_service",
+    "service_received": "legal_service",
+    "quantity_given": 70,
+    "quantity_received": 70
+  },
+  {
+    "contract_address": "0x054cc8595449789548610223Fc0192Cc1D14d9eB",
+    "initiator": "0xE02fAc164AdD204F3f16D8FF08b979Ae67aBcd3d",
+    "responder": "0xE02fAc164AdD204F3f16D8FF08b979Ae67aBcd3d",
+    "service_given": "design_service",
+    "service_received": "data_service",
+    "quantity_given": 40,
+    "quantity_received": 40
   }
 ]

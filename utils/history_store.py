@@ -15,3 +15,16 @@ def save_trade_to_history(trade):
     HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=2)
+
+def save_trade_history(trades, path="tmp/test_trade_history.json"):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(trades, f, indent=2)
+
+def load_test_trade_history(path="tmp/test_trade_history.json"):
+    path = Path(path)
+    if path.exists():
+        with open(path, "r") as f:
+            return json.load(f)
+    return []

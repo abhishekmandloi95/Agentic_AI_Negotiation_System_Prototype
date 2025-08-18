@@ -4,7 +4,7 @@ SHELL := /bin/bash
 PYTHONPATH := $(CURDIR)
 export PYTHONPATH
 
-.PHONY: test test-fast test-all test-ganache test-rag
+.PHONY: test test-fast test-all test-ganache test-rag test-new test-coverage
 
 test-fast:
 	pytest -q -m "not ganache"
@@ -17,5 +17,13 @@ test-rag:
 
 test-all:
 	GANACHE_OK=1 pytest -q
+
+test-new:
+	pytest tests/test_contract_logging.py tests/test_agent_market_reaction.py
+
+test-coverage:
+	coverage run -m pytest
+	coverage report -m
+	coverage html
 
 test: test-fast

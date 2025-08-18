@@ -181,3 +181,7 @@ class LLMNegotiationAgent:
         # record history for both
         self.history.append((other.agent_id, offer, request))
         other.history.append((self.agent_id, request, offer))
+
+
+        def build_prompt(self, *args, **kwargs):
+            return self._build_prompt(*args, **kwargs)
