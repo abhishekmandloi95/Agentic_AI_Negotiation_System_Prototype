@@ -150,3 +150,6 @@ class MarketInsights:
 
     def context_line(self, resource: str, horizon_days: Optional[int] = None) -> str:
         return self.get_signal(resource, horizon_days).notes
+
+    def set_use_prophet(self, flag: bool):
+        self._use_prophet = flag

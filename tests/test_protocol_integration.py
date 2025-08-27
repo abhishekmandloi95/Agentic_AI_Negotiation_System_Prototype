@@ -3,7 +3,8 @@ import pytest
 from negotiation.loop_trader import find_trade_loops
 from negotiation.protocol import detect_and_execute_loops
 from agents.base_agent import LLMNegotiationAgent
-
+from agents.base_agent import LLMNegotiationAgent, _MARKET
+from negotiation.protocol import negotiate_pair
 
 needs_ganache = pytest.mark.skipif(
     os.environ.get("GANACHE_OK") != "1",
@@ -12,8 +13,6 @@ needs_ganache = pytest.mark.skipif(
 
 @needs_ganache
 def test_negotiate_pair_minimal(monkeypatch):
-    from agents.base_agent import LLMNegotiationAgent, _MARKET
-    from negotiation.protocol import negotiate_pair
 
     # Market config (dynamic)
     _MARKET.configure(['data_service', 'ux_research'])

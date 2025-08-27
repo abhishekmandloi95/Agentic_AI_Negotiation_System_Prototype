@@ -12,26 +12,29 @@ from web3 import Web3
 import json
 import pandas as pd
 import copy
+from metrics.evaluation import evaluate
 
-tab1, tab2 = st.tabs(["Main App", "📜 View Contracts"])
-
-with tab2:
+with st.expander("📜 View Trade Contracts"):
     st.header("📜 Deployed Trade Contracts")
 
     show_history = st.toggle("Include historical trades", value=False)
 
-    if show_history:
-        contracts = load_trade_history()
-    else:
-        contracts = st.session_state.get("current_contracts", [])
-        # Include in-progress contracts if negotiation is running
-        in_progress = st.session_state.get("in_progress_contracts", [])
-        contracts = in_progress + contracts
+    contracts_to_render = []
 
-    if not contracts:
+    if show_history:
+        contracts_to_render = load_trade_history()
+    else:
+        in_progress = st.session_state.get("in_progress_contracts", [])
+        current = st.session_state.get("current_contracts", [])
+        live_contracts = [c for c in current if c.get("source") == "live"]
+        contracts_to_render = in_progress + live_contracts
+
+    contracts_to_render = [c for c in contracts_to_render if c]  # remove None/empty
+
+    if not contracts_to_render:
         st.info("No contracts to show.")
     else:
-        for i, trade in enumerate(contracts):
+        for i, trade in enumerate(contracts_to_render):
             if not trade.get("contract_address"):
                 st.subheader(f"📝 Simulated Contract {i+1}")
                 st.markdown(f"""
@@ -49,13 +52,12 @@ with tab2:
             - **Service Received**: {trade['service_received']} ({trade['quantity_received']})
             """)
             # Try live contract read
-            if trade.get("contract_address"):
-                try:
-                    contract = web3.eth.contract(address=trade['contract_address'], abi=abi)
-                    service = contract.functions.serviceGiven().call()
-                    st.success(f"✅ Contract live — service given: {service}")
-                except Exception as e:
-                    st.warning(f"⚠️ Contract not readable (might be expired): {e}")
+            try:
+                contract = web3.eth.contract(address=trade['contract_address'], abi=abi)
+                service = contract.functions.serviceGiven().call()
+                st.success(f"✅ Contract live — service given: {service}")
+            except Exception as e:
+                st.warning(f"⚠️ Contract not readable (might be expired): {e}")
     
 def render_agents_table():
     agents_data = []
@@ -97,18 +99,12 @@ if "agents" not in st.session_state:
     }
     st.session_state["agents"] = list(agents_by_id.values())
 
-# Commented out the container and initial rendering on main page
-# agents_table_container = st.container()
-# if "refresh_agents_table" not in st.session_state:
-#     st.session_state.refresh_agents_table = True
-# if st.session_state.refresh_agents_table:
-#     render_agents_table()
-#     st.session_state.refresh_agents_table = False
 
 st.title(" Multi-Agent Negotiation Viewer")
 
 # Sidebar refresh control
 with st.sidebar:
+    agents_table_container = st.container()  # ✅ Move here to show sidebar table
     ganache_status = False
     def is_ganache_running(url="http://127.0.0.1:7545"):
         try:
@@ -145,21 +141,13 @@ with st.sidebar:
     st.markdown(ganache_html, unsafe_allow_html=True)
 
     st.markdown("### Agent Controls")
-    if st.button("🔄 Refresh Agent Table"):
-        st.session_state.refresh_agents_table = True
+    refresh_clicked = st.checkbox("🔄 Show updated Agent Table", key="refresh_agents_table_checkbox")
+    if refresh_clicked:
+        render_agents_table()
 
     st.markdown("### Available Agents:")
     st.write(", ".join(agent_ids))
 
-    # Define the container inside sidebar for rendering the table
-    agents_table_container = st.container()
-
-    # Initialize and control agent table rendering
-    if "refresh_agents_table" not in st.session_state:
-        st.session_state.refresh_agents_table = True
-    if st.session_state.refresh_agents_table:
-        render_agents_table()
-        st.session_state.refresh_agents_table = False
 
     # Commented out to avoid double rendering on refresh
     # if st.session_state.get("refresh_agents_table"):
@@ -240,9 +228,13 @@ if st.session_state.get("start_negotiation"):
                     max_cycle_length=max_loop_len,
                     max_bilateral_rounds=n_rounds
                 )
-                st.session_state["in_progress_contracts"] = contract_metadata
+                if "in_progress_contracts" not in st.session_state:
+                    st.session_state["in_progress_contracts"] = []
+                st.session_state["in_progress_contracts"].extend(contract_metadata)
                 if "current_contracts" not in st.session_state:
                     st.session_state["current_contracts"] = []
+                for item in contract_metadata:
+                    item["source"] = "live"
                 st.session_state["current_contracts"].extend(contract_metadata)
                 for line in conversation:
                     st.markdown(line)
@@ -257,16 +249,20 @@ if st.session_state.get("start_negotiation"):
             max_cycle_length=max_loop_len,
             max_bilateral_rounds=n_rounds
         )
-        st.session_state["in_progress_contracts"] = contract_metadata
+        if "in_progress_contracts" not in st.session_state:
+            st.session_state["in_progress_contracts"] = []
+        st.session_state["in_progress_contracts"].extend(contract_metadata)
         if "current_contracts" not in st.session_state:
             st.session_state["current_contracts"] = []
+        for item in contract_metadata:
+            item["source"] = "live"
         st.session_state["current_contracts"].extend(contract_metadata)
         for line in conversation:
             st.markdown(line)
 
-    st.markdown("### 📦 Updated Inventories After Negotiation")
-    for agent in all_agents:
-        st.write(f"**{agent.agent_id}** → {agent.inventory}")
+    # st.markdown("### 📦 Updated Inventories After Negotiation")
+    # for agent in all_agents:
+    #     st.write(f"**{agent.agent_id}** → {agent.inventory}")
     st.session_state["start_negotiation"] = False  # ✅ reset trigger
     st.session_state["in_progress_contracts"] = []
 
@@ -365,7 +361,13 @@ if st.session_state.get("start_negotiation"):
 #                 else:
 #                     st.markdown(line)
 
-if DEPLOY_LOGS:
-    st.subheader("Contracts deployed in this run")
-    for addr, human in DEPLOY_LOGS.items():
-        st.code(f"{human}   ({addr})") #shows the address as well
+# if DEPLOY_LOGS:
+#     st.subheader("Contracts deployed in this run")
+#     for addr, human in DEPLOY_LOGS.items():
+#         st.code(f"{human}   ({addr})") #shows the address as well
+
+metrics = evaluate(total_possible_utility=100.0)
+
+with st.expander("📊 Evaluation Metrics"):
+    for k, v in metrics.items():
+        st.write(f"**{k}**: {v}")

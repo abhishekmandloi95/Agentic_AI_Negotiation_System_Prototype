@@ -2,6 +2,7 @@ from langchain_ollama import OllamaLLM
 from langchain.prompts import PromptTemplate
 from market.service import MarketInsightsService
 from langchain.chat_models import ChatOpenAI
+from negotiation.rag_memory import NegotiationRAGMemory
 
 try:
     _MARKET = MarketInsightsService.from_file("config/market.yml")
@@ -9,7 +10,7 @@ except Exception:
     _MARKET = MarketInsightsService.from_config({"services": {}})
 
 class LLMNegotiationAgent:
-    def __init__(self, agent_id, style, inventory: dict, needs: dict):
+    def __init__(self, agent_id, style, inventory: dict, needs: dict, memory_enabled=True):
         # config
         self.agent_id  = agent_id
         self.style     = style
@@ -32,6 +33,13 @@ class LLMNegotiationAgent:
             ],
             template_format="jinja2"
         )
+
+        if memory_enabled:
+            self.memory = NegotiationRAGMemory()
+        else:
+            self.memory = None
+
+        self.memory_enabled = memory_enabled
 
         self.chain = self.prompt_template | self.llm
 
@@ -185,3 +193,10 @@ class LLMNegotiationAgent:
 
         def build_prompt(self, *args, **kwargs):
             return self._build_prompt(*args, **kwargs)
+
+    def get_utility(self):
+        fulfilled = 0
+        for res, need_qty in self.needs.items():
+            inventory_qty = self.inventory.get(res, 0)
+            fulfilled += min(need_qty, inventory_qty)
+        return fulfilled

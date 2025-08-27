@@ -4,7 +4,7 @@ SHELL := /bin/bash
 PYTHONPATH := $(CURDIR)
 export PYTHONPATH
 
-.PHONY: test test-fast test-all test-ganache test-rag test-new test-coverage
+.PHONY: test test-fast test-all test-ganache test-rag test-market-reaction test-behavior test-critical test-rag-effect test-prophet-signals test-coverage
 
 test-fast:
 	pytest -q -m "not ganache"
@@ -16,14 +16,45 @@ test-rag:
 	pytest -q -m ragheavy
 
 test-all:
-	GANACHE_OK=1 pytest -q
+	GANACHE_OK=1 pytest -q tests/
 
-test-new:
-	pytest tests/test_contract_logging.py tests/test_agent_market_reaction.py
+test-market-reaction:
+	pytest -q tests/test_contract_logging.py tests/test_agent_market_reaction.py
+
+test-behavior:
+	pytest -q tests/test_negotiation_behavior.py
+
+test-critical:
+	pytest -q tests/test_critical_edge_cases.py
+
+test-rag-effect:
+	pytest -q tests/test_rag_effect_on_negotiation.py
+
+test-prophet-signals:
+	pytest -q tests/test_prophet_market_signals.py
 
 test-coverage:
 	coverage run -m pytest
 	coverage report -m
 	coverage html
 
-test: test-fast
+test:
+	make test-fast
+
+experiments-loop-metrics-analysis:
+	PYTHONPATH=. python experiments/loop_metrics_analysis.py
+
+experiments-run-rag-vs-prophet:
+	PYTHONPATH=. python experiments/rag_vs_prophet_behavior.py
+
+experiments-performance-profile:
+	PYTHONPATH=. python experiments/performance_profile.py
+
+experiments-prophet-performance-profile:
+	PYTHONPATH=. python experiments/prophet_performance_profile.py
+
+run-experiments:
+	PYTHONPATH=. python experiments/loop_metrics_analysis.py
+	PYTHONPATH=. python experiments/rag_vs_prophet_behavior.py
+	PYTHONPATH=. python experiments/performance_profile.py
+	PYTHONPATH=. python experiments/prophet_performance_profile.py

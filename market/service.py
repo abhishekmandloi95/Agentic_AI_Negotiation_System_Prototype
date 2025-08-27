@@ -63,6 +63,7 @@ class MarketInsightsService:
         self.history: Dict[str, pd.DataFrame] = {}
         self.resources: List[str] = []
         self._cache: Dict[tuple[str, int], str] = {}
+        self._use_prophet = True
 
     @classmethod
     def from_config(cls, cfg: dict | None = None) -> "MarketInsightsService":
@@ -239,6 +240,11 @@ class MarketInsightsService:
         """One SYSTEM line per service (helper)."""
         return self.context(services, days_ahead=days_ahead).lines
 
+    def set_use_prophet(self, value: bool):
+        self._use_prophet = value
+
+    def get_use_prophet(self) -> bool:
+        return self._use_prophet
 
 # Shared singleton
 service = MarketInsightsService()

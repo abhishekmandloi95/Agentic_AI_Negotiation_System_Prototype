@@ -7,13 +7,21 @@ from agents.base_agent import LLMNegotiationAgent
 from negotiation.loop_trader import detect_and_execute_loops
 from blockchain.contract_manager import deploy_contract
 from market.service import service as market_insights
+from metrics.evaluation import log_conversation
 
 SHOW_MARKET_SYSTEM_LINES = False
 
 # Web3 connection
-_w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:7545"))
-if not _w3.is_connected():
-    raise ConnectionError("Start Ganache (port 7545) before running.")
+# _w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:7545"))
+# if not _w3.is_connected():
+#     raise ConnectionError("Start Ganache (port 7545) before running.")
+
+# ✅ Lazy connection
+def get_w3():
+    w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:7545"))
+    if not w3.is_connected():
+        raise ConnectionError("Start Ganache (port 7545) before running.")
+    return w3
 
 AGENT_ADDR: dict[str, str] = {}
 rag_memory = NegotiationRAGMemory()
@@ -181,7 +189,8 @@ def run_negotiation_simulation(loop_ids, agents=None, yaml_path="profiles.yaml",
 
     unmapped = [a for a in agents if a.agent_id not in AGENT_ADDR]
     for i, agent in enumerate(unmapped, start=len(AGENT_ADDR)):
-        AGENT_ADDR[agent.agent_id] = _w3.eth.accounts[i]
+        # AGENT_ADDR[agent.agent_id] = _w3.eth.accounts[i]
+        AGENT_ADDR[agent.agent_id] = get_w3().eth.accounts[i]
 
     if loop_ids:
         loop_agents = [a for a in agents if a.agent_id in loop_ids]
@@ -232,5 +241,7 @@ def run_negotiation_simulation(loop_ids, agents=None, yaml_path="profiles.yaml",
                 note="multilateral loop",
                 loop_ids=loop_ids
             )
+            
+    log_conversation([a.agent_id for a in loop_agents], {a.agent_id: a for a in loop_agents}, conversation)
 
     return conversation, contract_metadata
