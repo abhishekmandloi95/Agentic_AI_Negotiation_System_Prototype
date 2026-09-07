@@ -13,6 +13,7 @@ import json
 import pandas as pd
 import copy
 from metrics.evaluation import evaluate
+from utils.history_store import create_conversation_log, append_conversation_line
 
 with st.expander("📜 View Trade Contracts"):
     st.header("📜 Deployed Trade Contracts")
@@ -148,6 +149,9 @@ with st.sidebar:
     st.markdown("### Available Agents:")
     st.write(", ".join(agent_ids))
 
+    if st.sidebar.button("🧹 Clear Conversation Log"):
+        st.session_state["conversation_log"] = []
+
 
     # Commented out to avoid double rendering on refresh
     # if st.session_state.get("refresh_agents_table"):
@@ -199,6 +203,12 @@ if st.session_state.get("start_negotiation"):
         st.session_state["start_negotiation"] = False  # ✅ reset trigger
         st.stop()
 
+    # Conversation log file creation
+    log_path = create_conversation_log()
+    st.session_state["conversation_log_path"] = log_path
+    if "conversation_log" in st.session_state:
+        del st.session_state["conversation_log"]
+
     all_agents = st.session_state["agents"]
     agents_by_id = {agent.agent_id: agent for agent in all_agents}
 
@@ -236,8 +246,26 @@ if st.session_state.get("start_negotiation"):
                 for item in contract_metadata:
                     item["source"] = "live"
                 st.session_state["current_contracts"].extend(contract_metadata)
+
+                if "conversation_log" not in st.session_state:
+                    st.session_state["conversation_log"] = []
+
                 for line in conversation:
-                    st.markdown(line)
+                    if "Running negotiation for loop:" in line:
+                        st.success(line)
+                    else:
+                        st.markdown(line)
+                    st.session_state["conversation_log"].append(line)
+                    # Try extracting metadata for structured logging
+                    try:
+                        if ": " in line:
+                            agent, msg = line.split(": ", 1)
+                            exchange_details = None
+                            if "⇄" in msg or "exchange" in msg.lower():
+                                exchange_details = msg
+                            append_conversation_line(agent, msg, exchange_details, path=st.session_state.get("conversation_log_path"))
+                    except Exception as e:
+                        print("Logging error:", e)
                 st.markdown("---")
     else:
         st.success("Running one large negotiation with all agents.")
@@ -257,7 +285,32 @@ if st.session_state.get("start_negotiation"):
         for item in contract_metadata:
             item["source"] = "live"
         st.session_state["current_contracts"].extend(contract_metadata)
+
+        if "conversation_log" not in st.session_state:
+            st.session_state["conversation_log"] = []
+
         for line in conversation:
+            if "Running negotiation for loop:" in line:
+                st.success(line)
+            else:
+                st.markdown(line)
+            st.session_state["conversation_log"].append(line)
+            # Try extracting metadata for structured logging
+            try:
+                if ": " in line:
+                    agent, msg = line.split(": ", 1)
+                    exchange_details = None
+                    if "⇄" in msg or "exchange" in msg.lower():
+                        exchange_details = msg
+                    append_conversation_line(agent, msg, exchange_details, path=st.session_state.get("conversation_log_path"))
+            except Exception as e:
+                print("Logging error:", e)
+
+    st.markdown("### 💬 Agent Conversations")
+    for line in st.session_state.get("conversation_log", []):
+        if "Running negotiation for loop:" in line:
+            st.success(line)
+        else:
             st.markdown(line)
 
     # st.markdown("### 📦 Updated Inventories After Negotiation")
@@ -265,6 +318,7 @@ if st.session_state.get("start_negotiation"):
     #     st.write(f"**{agent.agent_id}** → {agent.inventory}")
     st.session_state["start_negotiation"] = False  # ✅ reset trigger
     st.session_state["in_progress_contracts"] = []
+
 
 # ❌ Moved negotiation block to respond to st.session_state["start_negotiation"]
 # to prevent loss during rerun (e.g. from sidebar table refresh)
