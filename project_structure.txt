@@ -1,56 +1,62 @@
-.
-├── agents
-│   ├── __init__.py
-│   └── base_agent.py
-├── blockchain
-│   ├── compile_contract.py
-│   ├── contract_manager.py
-│   └── TradeAgreement.sol
-├── data
-│   └── profiles.yaml
-├── experiments
-│   ├── figures
-│   │   ├── behavioral_comparison_rag_prophet.png
-│   │   ├── Figure_1.png
-│   │   └── rag_loop_comparison.png
-│   ├── loop_metrics_analysis.py
-│   ├── performance_profile.py
-│   └── prophet_performance_profile.py
-├── how_to_use_makefile_for_testing.txt
-├── makefile
-├── market
-│   ├── __init__.py
-│   ├── forecaster.py
-│   ├── insights.py
-│   ├── schemas.py
-│   ├── service.py
-│   └── simulator.py
-├── metrics
-│   └── evaluation.py
-├── negotiation
-│   ├── __init__.py
-│   ├── loop_trader.py
-│   ├── protocol.py
-│   └── rag_memory.py
-├── project_map.txt
-├── project_structure.txt
-├── prompts
-│   └── agent_prompt.txt
-├── pytest.ini
-├── requirements.txt
-├── simulator
-├── tests
-│   ├── conftest.py
-│   ├── test_contract_logging.py
-│   ├── test_critical_edge_cases.py
-│   ├── test_market_service.py
-│   ├── test_negotiation_behavior.py
-│   ├── test_prophet_market_signals.py
-│   ├── test_protocol_integration.py
-│   ├── test_rag_effect_on_negotiation.py
-│   └── test_rag_memory.py
-├── ui_app.py
-└── utils
-    └── history_store.py
-
-13 directories, 41 files
+Project source map (generated files and virtual environments omitted):
+agents/
+  __init__.py
+  base_agent.py
+blockchain/
+  TradeAgreement.json
+  TradeAgreement.sol
+  TradeRecord.json
+  TradeRecord.sol
+  compile_contract.py
+  contract_manager.py
+data/
+  profiles.yaml
+experiments/
+  benchmark.py
+  loop_metrics_analysis.py
+  performance_profile.py
+  prophet_performance_profile.py
+market/
+  __init__.py
+  forecaster.py
+  insights.py
+  schemas.py
+  service.py
+  simulator.py
+metrics/
+  evaluation.py
+negotiation/
+  __init__.py
+  loop_trader.py
+  protocol.py
+  rag_memory.py
+  trades.py
+prompts/
+  agent_prompt.txt
+tests/
+  conftest.py
+  test_blockchain.py
+  test_contract_logging.py
+  test_critical_edge_cases.py
+  test_decision_client.py
+  test_evaluation.py
+  test_experiments.py
+  test_live_features.py
+  test_market_service.py
+  test_negotiation_behavior.py
+  test_prophet_market_signals.py
+  test_protocol_integration.py
+  test_rag_effect_on_negotiation.py
+  test_rag_memory.py
+  test_ui.py
+utils/
+  chat_view.py
+  history_store.py
+  paths.py
+ui_app.py
+README.md
+MAINTENANCE.md
+makefile
+pytest.ini
+requirements*.txt
+docs/USAGE.md

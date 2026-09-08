@@ -1,4 +1,7 @@
-make test-fast     # unit tests only (market/prophet + rag if lightweight)
-make test-ganache  # only tests that need Ganache (requires Ganache running)
-make test-rag      # only RAG tests (skips if deps missing)
-make test-all      # everything, including Ganache tests
+Create a fresh Python 3.12 .venv; see README.md.
+make test          runs deterministic core and UI tests
+make test-all      adds installed optional feature tests
+make benchmark    runs a seeded offline baseline and saves JSON
+make run          starts Streamlit
+Override Python if needed: make test PYTHON=/absolute/path/to/python
+Live Ollama/Ganache tests require explicit environment opt-ins described in README.md.

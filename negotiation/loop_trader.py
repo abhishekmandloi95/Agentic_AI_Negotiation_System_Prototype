@@ -1,127 +1,75 @@
+"""Directed trade cycles; prior bilateral acceptance never authorises a cycle."""
 from collections import defaultdict
+from negotiation.trades import Proposal, Transfer, execute_proposal
 
 def build_trade_graph(agents):
-    graph = defaultdict(list)
     id_map = {a.agent_id: a for a in agents}
-
+    if len(id_map) != len(agents):
+        raise ValueError("Agent IDs must be unique.")
+    graph = defaultdict(list)
     for a in agents:
         for b in agents:
-            if a.agent_id == b.agent_id:
-                continue
-            for res, qty in a.inventory.items():
-                if qty > 0 and b.needs.get(res, 0) > 0:
-                    graph[a.agent_id].append((b.agent_id, res))
+            if a.agent_id != b.agent_id:
+                for r, q in sorted(a.inventory.items()):
+                    if q > 0 and b.needs.get(r, 0) > 0:
+                        graph[a.agent_id].append((b.agent_id, r))
     return graph, id_map
 
-def _dfs_cycles(graph, start, current, visited, path, loops, max_len=None):
-    if max_len and len(path) > max_len:
-        return
-
-    for (nbr, res) in graph[current]:
-        if nbr == start and len(path) >= 1:
-            # -- enforce max_len on the closing edge too --
-            if max_len and (len(path) + 1) > max_len:
-                continue
-            loops.append(path + [(current, nbr, res)])
-        elif nbr not in visited:
-            # -- pre-check to avoid recursing into overlength paths --
-            if max_len and (len(path) + 1) > max_len:
-                continue
-            _dfs_cycles(
-                graph, start, nbr,
-                visited | {nbr},
-                path + [(current, nbr, res)],
-                loops, max_len
-            )
-
-
 def find_trade_loops(agents, max_cycle_length=None):
-
-    graph, id_map = build_trade_graph(agents)
-    loops = []
-    for a in agents:
-        _dfs_cycles(graph, a.agent_id, a.agent_id, {a.agent_id}, [], loops, max_cycle_length)
-    # Deduplicate by picking a canonical rotation for each loop
+    graph, _ = build_trade_graph(agents)
+    if len(agents) < 2:
+        return []
+    limit = len(agents) if max_cycle_length is None else max_cycle_length
+    if limit < 2:
+        raise ValueError("Cycle length must be at least two.")
     seen = set()
-    unique_loops = []
-    for loop in loops:
-        n = len(loop)
-        # rotations (forward)
-        rotations_fwd = [tuple(loop[i:] + loop[:i]) for i in range(n)]
-        # rotations (reversed): reverse order AND swap (from,to) for each edge
-        rev = [(to, frm, res) for (frm, to, res) in reversed(loop)]
-        rotations_rev = [tuple(rev[i:] + rev[:i]) for i in range(n)]
-        canon = min(rotations_fwd + rotations_rev)
-        if canon not in seen:
-            seen.add(canon)
-            unique_loops.append(list(canon))
-    return unique_loops
+    def visit(start, current, visited, path):
+        for neighbor, resource in graph[current]:
+            edge = (current, neighbor, resource)
+            if neighbor == start and len(path) >= 1:
+                loop = path + [edge]
+                if len(loop) <= limit and all(loop[i][2] != loop[(i + 1) % len(loop)][2] for i in range(len(loop))):
+                    # Rotations preserve directed edges; reversal does not.
+                    seen.add(min(tuple(loop[i:] + loop[:i]) for i in range(len(loop))))
+            elif neighbor not in visited and len(path) + 1 < limit:
+                visit(start, neighbor, visited | {neighbor}, path + [edge])
+    for aid in sorted(graph.copy()):
+        visit(aid, aid, {aid}, [])
+    return [list(loop) for loop in sorted(seen)]
 
-def execute_loop(loop, id_map):
-
-    # 1) Figure out how much we can move on each edge
-    amounts = []
-    for frm, to, res in loop:
-        giver    = id_map[frm]
-        receiver = id_map[to]
-
-        available = giver.inventory.get(res, 0)
-        needed    = receiver.needs.get(res, 0)
-        amounts.append(min(available, needed))
-
-    qty = min(amounts) if amounts else 0
+def loop_proposal(loop, id_map):
+    if len(loop) < 2 or len({edge[0] for edge in loop}) != len(loop):
+        raise ValueError("A cycle must visit each participant once.")
+    if any(loop[i][1] != loop[(i + 1) % len(loop)][0] for i in range(len(loop))):
+        raise ValueError("Cycle edges do not form a closed directed path.")
+    qty = min(min(id_map[f].inventory.get(r, 0), id_map[t].needs.get(r, 0)) for f, t, r in loop)
     if qty <= 0:
-        return 0
+        return None
+    return Proposal.create([Transfer(f, t, r, qty) for f, t, r in loop], kind="loop")
 
-    # 2) Execute the transfers safely
-    for frm, to, res in loop:
-        giver    = id_map[frm]
-        receiver = id_map[to]
+def execute_loop(loop, id_map, *, proposal=None, approvals=None):
+    if proposal is None or approvals is None:
+        raise ValueError("Explicit cycle proposal and participant approvals are required.")
+    if tuple((t.giver, t.receiver, t.resource) for t in proposal.transfers) != tuple(loop):
+        raise ValueError("Approvals do not match these cycle edges.")
+    execute_proposal(proposal, id_map, approvals)
+    return proposal.transfers[0].quantity
 
-        # subtract from giver
-        giver.inventory[res]   = giver.inventory.get(res, 0) - qty
-
-        # add to receiver
-        receiver.inventory[res] = receiver.inventory.get(res, 0) + qty
-
-        # reduce their need
-        receiver.needs[res]     = max(0, receiver.needs.get(res, 0) - qty)
-
-        # record history on both sides
-        # giver logs what they gave
-        giver.history.append((to, {res: qty}, {}))
-        # receiver logs what they received
-        receiver.history.append((frm, {}, {res: qty}))
-
-    return qty
-
-# --- Integration into your engine ---
-
-def detect_and_execute_loops(agents, max_cycle_length=None, confirmed_pairs=None):
-    loops = []
-    found_loops = find_trade_loops(agents, max_cycle_length)
-    id_map = {a.agent_id: a for a in agents}  # ✅ define id_map once
-
-    for loop in found_loops:
-        loop_pairs = [tuple(sorted([f, t])) for f, t, _ in loop]
-
-        # Check confirmation if required
-        if confirmed_pairs is not None:
-            missing = [p for p in loop_pairs if p not in confirmed_pairs]
+def detect_and_execute_loops(agents, max_cycle_length=None, confirmed_pairs=None, *, approve=None):
+    """Compatibility helper. A callback must approve each exact cycle proposal."""
+    id_map = {a.agent_id: a for a in agents}
+    results = []
+    for loop in find_trade_loops(agents, max_cycle_length):
+        proposal = loop_proposal(loop, id_map)
+        if proposal is None:
+            results.append((loop, 0, "No transferable quantity"))
+        elif approve is None:
+            results.append((loop, 0, "Missing explicit cycle approvals; bilateral confirmations do not suffice"))
         else:
-            missing = []
-
-        if missing:
-            reason = f"[Loop invalid: missing verbal confirmations for {missing}. Loop aborted to prevent unfair trades]"
-            loops.append((loop, 0, reason))  # ✅ keep reason for UI display
-            continue
-
-        qty = execute_loop(loop, id_map)
-        if qty <= 0:
-            reason = "[Loop invalid: no transferable quantity available]"
-            loops.append((loop, 0, reason))  # ✅ keep reason for UI display
-            continue
-
-        loops.append((loop, qty))  # No reason for valid loops
-
-    return loops
+            approvals = {aid: proposal.proposal_id for aid in proposal.participants
+                         if approve(id_map[aid], proposal) is True}
+            if len(approvals) != len(proposal.participants):
+                results.append((loop, 0, "Cycle rejected"))
+            else:
+                results.append((loop, execute_loop(loop, id_map, proposal=proposal, approvals=approvals)))
+    return results

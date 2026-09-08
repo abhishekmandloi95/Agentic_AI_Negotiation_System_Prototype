@@ -1,32 +1,30 @@
-from solcx import compile_standard, install_solc
+"""Compile the new audit contract without replacing the legacy artifact."""
+import argparse
 import json
+from pathlib import Path
+from utils.paths import ROOT
 
-install_solc("0.8.0")
+def compile_record(install=False):
+    from solcx import compile_standard, get_installed_solc_versions, install_solc
+    version = "0.8.20"
+    if version not in {str(v) for v in get_installed_solc_versions()}:
+        if not install:
+            raise RuntimeError("Compiler missing. Run: python -m blockchain.compile_contract --install")
+        install_solc(version)
+    source = (ROOT / "blockchain/TradeRecord.sol").read_text()
+    result = compile_standard({
+        "language": "Solidity", "sources": {"TradeRecord.sol": {"content": source}},
+        "settings": {"outputSelection": {"*": {"*": ["abi", "evm.bytecode.object"]}}},
+    }, solc_version=version)
+    contract = result["contracts"]["TradeRecord.sol"]["TradeRecord"]
+    artifact = {"abi": contract["abi"], "bytecode": contract["evm"]["bytecode"]["object"],
+                "compiler": version}
+    target = ROOT / "blockchain/TradeRecord.json"
+    target.write_text(json.dumps(artifact, indent=2))
+    return target
 
-with open("blockchain/TradeAgreement.sol", "r") as file:
-    source_code = file.read()
-
-compiled_sol = compile_standard(
-    {
-        "language": "Solidity",
-        "sources": {"TradeAgreement.sol": {"content": source_code}},
-        "settings": {
-            "outputSelection": {
-                "*": {
-                    "*": ["abi", "evm.bytecode.object"]
-                }
-            }
-        }
-    },
-    solc_version="0.8.0"
-)
-
-contract_interface = compiled_sol["contracts"]["TradeAgreement.sol"]["TradeAgreement"]
-
-with open("blockchain/TradeAgreement.json", "w") as f:
-    json.dump({
-        "abi": contract_interface["abi"],
-        "bytecode": contract_interface["evm"]["bytecode"]["object"]
-    }, f)
-
-print(" Contract compiled and saved as TradeAgreement.json")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--install", action="store_true")
+    args = parser.parse_args()
+    print(compile_record(args.install))

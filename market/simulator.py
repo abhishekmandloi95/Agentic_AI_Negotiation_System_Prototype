@@ -6,7 +6,7 @@ import random
 
 def gbm_series(last_price: float, days: int, mu: float = 0.05, sigma: float = 0.2) -> List[PricePoint]:
 
-    random.seed(42)
+    rng = random.Random(42)
     """
     Generate a simple geometric Brownian motion price path.
     - Step size assumes trading days (dt = 1/252).
@@ -32,7 +32,7 @@ def gbm_series(last_price: float, days: int, mu: float = 0.05, sigma: float = 0.
     drift = (mu - 0.5 * sigma * sigma) * dt
 
     for i in range(1, days + 1):
-        z = random.gauss(0.0, 1.0)
+        z = rng.gauss(0.0, 1.0)
         price *= math.exp(drift + sigma * sqrt_dt * z)
         # clamp just in case of numerical weirdness
         if not math.isfinite(price) or price <= 0.0:

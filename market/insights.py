@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Optional, Dict
 import os
 import pandas as pd
+from utils.paths import project_path
 
 from .schemas import MarketConfig, MarketSignal, PriceForecast  # PricePoint not used
 from .forecaster import fit_and_forecast, ProphetUnavailable
@@ -16,6 +17,7 @@ class MarketInsights:
     """
     def __init__(self, config: MarketConfig):
         self.config = config
+        self._use_prophet = True
         self._last_prices: Dict[str, float] = {}
         self._cache: Dict[tuple, MarketSignal] = {}  # (resource, horizon)->signal
 
@@ -23,6 +25,8 @@ class MarketInsights:
         src = self.config.resource_sources.get(resource)
         if not src:
             return None
+
+        src = str(project_path(src))
 
         # CSV path only for now
         if not (os.path.exists(src) and src.lower().endswith(".csv")):
@@ -69,6 +73,8 @@ class MarketInsights:
 
         if history is not None:
             try:
+                if not self._use_prophet:
+                    raise ProphetUnavailable("Forecasting disabled")
                 fc = fit_and_forecast(history, h)
                 last = float(history["y"].iloc[-1])
                 # take last day of horizon
@@ -152,4 +158,6 @@ class MarketInsights:
         return self.get_signal(resource, horizon_days).notes
 
     def set_use_prophet(self, flag: bool):
-        self._use_prophet = flag
+        if self._use_prophet != flag:
+            self._use_prophet = flag
+            self._cache.clear()

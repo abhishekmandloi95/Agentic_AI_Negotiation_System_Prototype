@@ -1,29 +1,34 @@
-# tests/test_rag_memory.py
+import numpy as np
 import pytest
+from negotiation.rag_memory import NegotiationRAGMemory, chunk_conversation
 
-def test_add_and_retrieve_per_pair():
-    from negotiation.rag_memory import NegotiationRAGMemory
+class TinyEmbedder:
+    def encode(self, texts, **kwargs):
+        return np.array([[text.lower().count("wood"), text.lower().count("gold")] for text in texts], dtype=np.float32)
 
-    rag = NegotiationRAGMemory()
+@pytest.mark.ragheavy
+def test_pair_isolation_and_ranking():
+    pytest.importorskip("faiss")
+    memory = NegotiationRAGMemory(embedder=TinyEmbedder(), max_snippets=2)
+    memory.add_snippet("A", "B", "wood wood")
+    memory.add_snippet("A", "B", "gold gold")
+    memory.add_snippet("A", "C", "gold private")
+    assert memory.retrieve("B", "A", "wood wood", 1) == ["wood wood"]
+    assert memory.retrieve("A", "D", "wood") == []
+    assert memory.retrieve("A", "B", "gold", 0) == []
+    memory.add_snippet("A", "B", "new wood")
+    assert len(memory.memories[("A", "B")][0]) == 2
 
-    # Store per agent-pair
-    rag.add_snippet("A", "B", "A offered 30 design_service for 20 ux_research")
-    rag.add_snippet("A", "C", "A accepted 40 data_service for 50 product_service")
-    rag.add_snippet("B", "C", "B asked for legal_service")
+def test_empty_memory_does_not_load_model():
+    memory = NegotiationRAGMemory()
+    assert memory.retrieve("A", "B", "query") == []
+    assert memory._embedder is None
 
-    # Queries are per pair
-    res_ab = rag.retrieve("A", "B", "ux research trade", top_k=2)
-    text = " ".join(res_ab).lower() if isinstance(res_ab, (list, tuple)) else str(res_ab).lower()
-    assert "ux" in text and "research" in text
+@pytest.mark.parametrize("size, overlap", [(0,0), (10,10), (10,-1)])
+def test_invalid_chunking(size, overlap):
+    with pytest.raises(ValueError):
+        chunk_conversation("example", size, overlap)
 
-    res_ac = rag.retrieve("A", "C", "data service", top_k=1)
-    assert any("data_service" in s for s in res_ac)
-
-def test_chunking_long_message_overlap():
-    from negotiation.rag_memory import chunk_conversation
-    long_msg = "This is a very long message " * 50
-    chunks = chunk_conversation(long_msg, chunk_size=100, overlap=20)
-
-    assert all(len(c) <= 100 for c in chunks)
-    assert len(chunks) > 1
-    assert any(chunks[i][-20:] == chunks[i+1][:20] for i in range(len(chunks)-1))
+def test_chunks_overlap():
+    chunks = chunk_conversation("abcdefghij" * 10, 20, 5)
+    assert all(a[-5:] == b[:5] for a,b in zip(chunks,chunks[1:]))

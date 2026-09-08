@@ -1,247 +1,258 @@
+"""Explicit proposal/approval protocol; no execution inferred from prose."""
+import json
 import random
-import yaml
-import re
-from web3 import Web3
-from negotiation.rag_memory import NegotiationRAGMemory
+from datetime import datetime, timezone
+from uuid import uuid4
 from agents.base_agent import LLMNegotiationAgent
-from negotiation.loop_trader import detect_and_execute_loops
-from blockchain.contract_manager import deploy_contract
-from market.service import service as market_insights
-from metrics.evaluation import log_conversation
-
-SHOW_MARKET_SYSTEM_LINES = False
-
-# Web3 connection
-# _w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:7545"))
-# if not _w3.is_connected():
-#     raise ConnectionError("Start Ganache (port 7545) before running.")
-
-# ✅ Lazy connection
-def get_w3():
-    w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:7545"))
-    if not w3.is_connected():
-        raise ConnectionError("Start Ganache (port 7545) before running.")
-    return w3
-
-AGENT_ADDR: dict[str, str] = {}
-rag_memory = NegotiationRAGMemory()
+from negotiation.trades import Proposal, Transfer, execute_proposal, validate_proposal
+from negotiation.loop_trader import find_trade_loops, loop_proposal, detect_and_execute_loops
+from metrics.evaluation import summarize_run
+from utils.paths import project_path
 
 CONFIRM_KEYWORD = "deal accepted"
+SHOW_MARKET_SYSTEM_LINES = False
 
-def clean_text(reply: str) -> str:
-    """Fix common tokenization typos."""
-    reply = reply.replace("iven ", "Given ")
-    reply = reply.replace("I: 'm", "I'm")
-    return reply
+class Conversation(list):
+    def __init__(self):
+        super().__init__()
+        self.events = []
+        self.metrics = {}
+        self.run_id = uuid4().hex
 
-def _deploy_from_deal(deal: dict, from_id: str, to_id: str, note: str, loop_ids=None):
-    service_given, qty_given = next(iter(deal["offer"].items()))
-    service_recvd, qty_recvd = next(iter(deal["request"].items()))
+def clean_text(reply, agent_id=None):
+    text = str(getattr(reply, "content", reply)).strip()
+    if agent_id is not None:
+        text = text.removeprefix(f"{agent_id}:").lstrip()
+    return text
 
-    if from_id == to_id:
-        human_note = (f"{' → '.join(loop_ids)}  |  "
-                      f"{qty_given} {service_given} ⇄ {qty_recvd} {service_recvd}")
-    else:
-        human_note = (f"{from_id} → {to_id} : "
-                      f"{qty_given} {service_given} ⇄ {qty_recvd} {service_recvd}")
+def parse_decision(raw, proposal_id, agent_id=None):
+    if not isinstance(raw, dict):
+        try:
+            raw = json.loads(clean_text(raw, agent_id))
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("Decision must be a JSON object.") from exc
+    required = {"proposal_id", "action", "reason"}
+    if not isinstance(raw, dict) or not required.issubset(raw) or set(raw) - required - {"transfers"}:
+        raise ValueError("Decision requires proposal_id, action, reason and optional counter transfers.")
+    if raw["proposal_id"] != proposal_id or raw["action"] not in ("accept", "reject", "counter"):
+        raise ValueError("Wrong proposal ID or action.")
+    if not isinstance(raw["reason"], str):
+        raise ValueError("Decision reason must be text.")
+    transfers = raw.get("transfers", [])
+    if raw["action"] == "counter":
+        if not isinstance(transfers, list) or len(transfers) != 2:
+            raise ValueError("A bilateral counteroffer requires both transfer legs.")
+        for transfer in transfers:
+            if not isinstance(transfer, dict) or set(transfer) != {"giver", "receiver", "resource", "quantity"}:
+                raise ValueError("Counteroffer transfer fields are invalid.")
+            if any(not isinstance(transfer[k], str) or not transfer[k] for k in ("giver", "receiver", "resource")):
+                raise ValueError("Counteroffer participants and resources must be named.")
+            if type(transfer["quantity"]) is not int or transfer["quantity"] <= 0:
+                raise ValueError("Counteroffer quantities must be positive integers.")
+    elif transfers != []:
+        raise ValueError("An acceptance or rejection cannot change the proposed transfers.")
+    return dict(raw)
 
-    deploy_contract(
-        party_from=AGENT_ADDR[from_id],
-        party_to=AGENT_ADDR[to_id],
-        service_given=service_given,
-        service_received=service_recvd,
-        qty_given=qty_given,
-        qty_received=qty_recvd,
-        note=human_note
-    )
-
-def load_agents(yaml_path: str):
-    with open(yaml_path) as f:
+def load_agents(yaml_path="data/profiles.yaml", **agent_options):
+    import yaml
+    with project_path(yaml_path).open() as f:
         data = yaml.safe_load(f)
-    return [
-        LLMNegotiationAgent(
-            agent_id=a["id"],
-            style=a.get("style", "neutral"),
-            inventory=a["inventory"].copy(),
-            needs=a["needs"].copy(),
-        ) for a in data["agents"]
-    ]
+    agents = [LLMNegotiationAgent(a["id"], a.get("style", "neutral"),
+                                 a["inventory"], a["needs"], **agent_options)
+              for a in data["agents"]]
+    if len({a.agent_id for a in agents}) != len(agents):
+        raise ValueError("Agent IDs must be unique.")
+    return agents
 
 def offer_within_tolerance(need, offer, tolerance=0.10):
-    return abs(offer - need) <= tolerance * need
+    return need > 0 and offer > 0 and 0 <= tolerance <= 1 and abs(offer - need) <= tolerance * need
 
-def negotiate_pair(initiator, partner, confirmed_pairs, max_bilateral_rounds, contract_metadata):
-    convo = []
+def _event(conversation, kind, **details):
+    if hasattr(conversation, "events"):
+        conversation.events.append({"kind": kind, **details})
 
-    # Lock service from the initiator's first proposed trade
-    first_deal = initiator.propose_trade(partner)
-    locked_service = None
-    if first_deal:
-        locked_service = next(iter(first_deal["offer"].keys()))
+def _terms_message(proposal, speaker):
+    outgoing = [t for t in proposal.transfers if t.giver == speaker]
+    incoming = [t for t in proposal.transfers if t.receiver == speaker]
+    def describe(transfers):
+        return " and ".join(f"{t.quantity} units of {t.resource.replace('_', ' ')}" for t in transfers)
+    return f"I can offer {describe(outgoing)} in exchange for {describe(incoming)}."
 
-    # Market context for initiator
-    if SHOW_MARKET_SYSTEM_LINES:
-        for res in getattr(initiator, "needs", {}) or {}:
-            trend = market_insights.get_trend(res)
-            convo.append(f"SYSTEM: Forecast indicates '{res}' market is trending {trend}.")
+def _approve(proposal, agents_by_id, conversation, *, counteroffers=None, proposer=None):
 
-    # First message
-    if hasattr(raw_msg := initiator.open_negotiation(partner, max_rounds=max_bilateral_rounds), "content"):
-        raw_msg = raw_msg.content
-    clean_msg = clean_text(str(raw_msg).lstrip(f"{initiator.agent_id}: ").lstrip())
-    convo.append(f"{initiator.agent_id}: {clean_msg}")
+    validate_proposal(proposal, agents_by_id)
+    conversation.append("SYSTEM: Proposed " + json.dumps(proposal.to_dict(), sort_keys=True))
+    _event(conversation, "proposal", proposal=proposal.to_dict(), agent=proposer,
+           message=_terms_message(proposal, proposer) if proposer else "Let's consider this multilateral exchange.")
+    approvals = {}
+    order = list(proposal.participants)
+    if proposer in order:
+        order.remove(proposer)
+        order.insert(0, proposer)
+    for aid in order:
+        agent = agents_by_id[aid]
+        incoming = [t for t in proposal.transfers if t.receiver == aid]
+        try:
+            if agent.auto_accept and incoming and all(
+                offer_within_tolerance(agent.needs.get(t.resource, 0), t.quantity) for t in incoming
+            ):
+                decision = {"proposal_id": proposal.proposal_id, "action": "accept",
+                            "reason": "This meets my needs within the tolerance I am willing to accept."}
+            else:
+                participants = {key: {"inventory": value.inventory, "needs": value.needs}
+                                for key, value in agents_by_id.items() if key in proposal.participants}
+                decision = parse_decision(agent.decide(proposal, conversation, participants=participants),
+                                          proposal.proposal_id, aid)
+            if decision["action"] == "counter":
+                if proposal.kind != "bilateral" or counteroffers is None:
+                    raise ValueError("Counteroffers are supported for bilateral negotiations only.")
+                counter = Proposal.create([Transfer(**t) for t in decision["transfers"]])
+                if set(counter.participants) != set(proposal.participants):
+                    raise ValueError("Counteroffer must involve the same two agents.")
+                validate_proposal(counter, agents_by_id)
+                counteroffers.append((counter, aid))
+                conversation.append("SYSTEM: Counteroffer " + json.dumps(counter.to_dict(), sort_keys=True))
+                conversation.append(f"{aid}: counter {proposal.proposal_id} — {decision['reason']}")
+                _event(conversation, "decision", agent=aid, **decision)
+                _event(conversation, "counteroffer", agent=aid, proposal=counter.to_dict(),
+                       message=_terms_message(counter, aid))
+                # Original approvals cannot carry across changed terms.
+                return {}
+            conversation.append(f"{aid}: {decision['action']} {proposal.proposal_id} — {decision['reason']}")
+            _event(conversation, "decision", agent=aid, **decision)
+            if decision["action"] == "accept":
+                approvals[aid] = proposal.proposal_id
+        except Exception as exc:
+            conversation.append(f"SYSTEM: Decision failed for {aid}: {type(exc).__name__}: {exc}")
+            _event(conversation, "error", agent=aid, error=str(exc), category="invalid_response" if isinstance(exc, ValueError) else "provider_error")
+    return approvals
 
-    last_speaker = initiator.agent_id
+def _remember(proposal, agents_by_id, accepted, conversation):
+    for aid in proposal.participants:
+        try:
+            agents_by_id[aid].remember(proposal, accepted)
+        except Exception as exc:
+            conversation.append(f"SYSTEM: Memory failed for {aid}: {type(exc).__name__}: {exc}")
+            _event(conversation, "memory_error", agent=aid, error=str(exc))
 
+def _attempt(proposal, agents_by_id, conversation, records, *, counteroffers=None, proposer=None):
+    try:
+        approvals = _approve(proposal, agents_by_id, conversation, counteroffers=counteroffers, proposer=proposer)
+        if set(approvals) != set(proposal.participants):
+            _remember(proposal, agents_by_id, False, conversation)
+            return False
+        record = execute_proposal(proposal, agents_by_id, approvals)
+    except ValueError as exc:
+        conversation.append(f"SYSTEM: Proposal not executed: {exc}")
+        _event(conversation, "invalid", error=str(exc))
+        return False
+    records.append(record)
+    conversation.append(f"SYSTEM: Executed {proposal.kind} {proposal.proposal_id}")
+    _event(conversation, "executed", proposal_id=proposal.proposal_id)
+    _remember(proposal, agents_by_id, True, conversation)
+    return True
+
+def negotiate_pair(initiator, partner, confirmed_pairs, max_bilateral_rounds, contract_metadata,
+                   *, conversation=None):
+    conversation = Conversation() if conversation is None else conversation
+    by_id = {a.agent_id: a for a in (initiator, partner)}
+    if len(by_id) != 2:
+        raise ValueError("Cannot negotiate with self.")
+    start_count = len(contract_metadata)
+    rounds_used = 0
+    pending = None
+    unavailable = False
     for turn in range(max_bilateral_rounds):
-        # Alternate speaker
-        speaker, other = (partner, initiator) if last_speaker == initiator.agent_id else (initiator, partner)
-
-        # Market context for current speaker
-        if SHOW_MARKET_SYSTEM_LINES:
-            for res in getattr(speaker, "needs", {}) or {}:
-                trend = market_insights.get_trend(res)
-                convo.append(f"SYSTEM: Forecast indicates '{res}' market is trending {trend}.")
-
-        raw_reply = speaker.respond(other, clean_msg, convo, last_speaker, max_rounds=max_bilateral_rounds)
-        if hasattr(raw_reply, "content"):
-            raw_reply = raw_reply.content
-        clean_reply = clean_text(str(raw_reply).lstrip(f"{speaker.agent_id}: ").lstrip())
-
-        # --- Auto-accept tolerance ---
-        if CONFIRM_KEYWORD not in clean_reply.lower():
-            try:
-                deal = speaker.propose_trade(other)
-                if deal:
-                    service_given, offered_quantity = next(iter(deal["offer"].items()))
-                    agent_need = other.needs.get(service_given, 0)
-
-                    if offer_within_tolerance(agent_need, offered_quantity):
-                        # Explain why accepting
-                        pct = abs(offered_quantity - agent_need) / max(1e-9, agent_need) * 100
-                        clean_reply = (
-                            f"This offer for {service_given} is within 10% of my desired quantity "
-                            f"({offered_quantity} vs need {agent_need}), so I accept the deal.\n"
-                            f"{CONFIRM_KEYWORD}"
-                        )
-                        # Append immediately and confirm without counting this as a normal turn
-                        convo.append(f"{speaker.agent_id}: {clean_reply}")
-                        confirmed_pairs.add(tuple(sorted([initiator.agent_id, partner.agent_id])))
-
-                        # Immediate inventory update
-                        # Apply both legs of the accepted deal atomically
-                        speaker.execute_trade(other, deal["offer"], deal["request"])
-
-
-                        return convo  # ✅ End negotiation immediately
-            except Exception:
-                pass
-
-        # Append normal response
-        convo.append(f"{speaker.agent_id}: {clean_reply}")
-        clean_msg = clean_reply
-        last_speaker = speaker.agent_id
-
-        # If confirmed → record and update inventory now
-        if CONFIRM_KEYWORD in clean_reply.lower():
-            confirmed_pairs.add(tuple(sorted([initiator.agent_id, partner.agent_id])))
-            deal = speaker.propose_trade(other)
-            if deal:
-                speaker.execute_trade(other, deal["offer"], deal["request"])
-                contract_metadata.append({
-                    "initiator": speaker.agent_id,
-                    "responder": other.agent_id,
-                    "service_given": next(iter(deal["offer"])),
-                    "quantity_given": next(iter(deal["offer"].values())),
-                    "service_received": next(iter(deal["request"])),
-                    "quantity_received": next(iter(deal["request"].values())),
-                    "contract_address": None  # to be filled by UI or deploy_contract
-                })
+        if pending is not None:
+            proposal, proposer = pending
+            pending = None
+        else:
+            speaker, other = (initiator, partner) if turn % 2 == 0 else (partner, initiator)
+            deal = speaker.propose_trade(other, fraction=min(1, 0.5 + turn * 0.1))
+            if deal is None:
+                unavailable = True
+                break
+            proposal = Proposal.create(
+                [Transfer(speaker.agent_id, other.agent_id, r, q) for r, q in deal["offer"].items()] +
+                [Transfer(other.agent_id, speaker.agent_id, r, q) for r, q in deal["request"].items()])
+            proposer = speaker.agent_id
+        rounds_used += 1
+        counteroffers = []
+        if _attempt(proposal, by_id, conversation, contract_metadata,
+                    counteroffers=counteroffers, proposer=proposer):
+            confirmed_pairs.add(tuple(sorted(by_id)))
             break
+        if counteroffers:
+            pending = counteroffers[-1]
+    if len(contract_metadata) == start_count:
+        _event(conversation, "not_agreed", message=("No compatible bilateral trade is available with the current inventories and needs." if unavailable else "No agreement was reached within the proposal limit. Check individual replies for rejections or invalid responses."))
+    _event(conversation, "negotiation", rounds=rounds_used,
+           agreed=len(contract_metadata) > start_count, negotiation_kind="bilateral")
+    return conversation
 
-    # After negotiation loop (no deal reached)
-    if not any(tok in clean_msg.lower() for tok in [CONFIRM_KEYWORD]):
-        if not locked_service:
-            reason = "[No deal closed: no common valid service found]"
-        else:
-            reason = '[No deal closed: no "deal accepted" from LLM]'
-        convo.append(reason)
+def one_random_initiator_round(agents, confirmed_pairs, max_bilateral_rounds, contract_metadata,
+                               *, rng=None, conversation=None):
+    conversation = Conversation() if conversation is None else conversation
+    candidates = [(a, b) for a in agents for b in agents
+                  if a.agent_id < b.agent_id and a.can_request_from(b) and a.can_offer_to(b)
+                  and tuple(sorted((a.agent_id, b.agent_id))) not in confirmed_pairs]
+    if candidates:
+        a, b = (rng or random).choice(candidates)
+        negotiate_pair(a, b, confirmed_pairs, max_bilateral_rounds, contract_metadata,
+                       conversation=conversation)
+    return conversation
 
-    return convo
-
-def one_random_initiator_round(agents, confirmed_pairs, max_bilateral_rounds, contract_metadata):
-    initiator = random.choice(agents)
-    for partner in agents:
-        if initiator.agent_id == partner.agent_id:
-            continue
-        if not initiator.can_request_from(partner):
-            continue
-        if tuple(sorted([initiator.agent_id, partner.agent_id])) in confirmed_pairs:
-            continue  # Skip if already dealt
-        return negotiate_pair(initiator, partner, confirmed_pairs, max_bilateral_rounds, contract_metadata)
-    return []
-
-def run_negotiation_simulation(loop_ids, agents=None, yaml_path="profiles.yaml", rounds=3,
-                               max_cycle_length=None, max_bilateral_rounds=3):
-    if agents is None:
-        agents = load_agents(yaml_path)
-    confirmed_pairs = set()
-
-    unmapped = [a for a in agents if a.agent_id not in AGENT_ADDR]
-    for i, agent in enumerate(unmapped, start=len(AGENT_ADDR)):
-        # AGENT_ADDR[agent.agent_id] = _w3.eth.accounts[i]
-        AGENT_ADDR[agent.agent_id] = get_w3().eth.accounts[i]
-
+def run_negotiation_simulation(loop_ids=None, agents=None, yaml_path="data/profiles.yaml", rounds=3,
+                               max_cycle_length=None, max_bilateral_rounds=3, *,
+                               seed=0, record_on_chain=False, recorder=None, persist=False):
+    if rounds < 0 or max_bilateral_rounds < 0:
+        raise ValueError("Round limits must be nonnegative.")
+    agents = load_agents(yaml_path) if agents is None else list(agents)
+    if len({a.agent_id for a in agents}) != len(agents):
+        raise ValueError("Agent IDs must be unique.")
     if loop_ids:
-        loop_agents = [a for a in agents if a.agent_id in loop_ids]
-    else:
-        loop_agents = agents
-
-    contract_metadata = []
-    conversation = []
+        missing = set(loop_ids) - {a.agent_id for a in agents}
+        if missing:
+            raise ValueError(f"Unknown selected agents: {sorted(missing)}")
+        agents = [a for a in agents if a.agent_id in loop_ids]
+    by_id = {a.agent_id: a for a in agents}
+    conversation, records, pairs = Conversation(), [], set()
+    before = {a.agent_id: a.get_utility() for a in agents}
+    remaining_before = sum(sum(a.needs.values()) for a in agents)
+    rng = random.Random(seed)
     for _ in range(rounds):
-        conversation.extend(one_random_initiator_round(loop_agents, confirmed_pairs, max_bilateral_rounds, contract_metadata))
-
-    loops = detect_and_execute_loops(
-        loop_agents,
-        max_cycle_length=max_cycle_length,
-        confirmed_pairs=confirmed_pairs
-    )
-
-    for loop_entry in loops:
-        # Allow detect_and_execute_loops() to optionally return a reason
-        if len(loop_entry) == 3:
-            loop, qty, reason = loop_entry
-        else:
-            loop, qty = loop_entry
-            reason = ""
-
-        path = " → ".join(f"{f}->{t}({r})" for f, t, r in loop)
-        status = "[VALID]" if qty > 0 else "[INVALID]"
-
-        # Append reason to conversation so it shows in Streamlit
-        if reason:
-            conversation.append(f"Loop: {path} | qty each: {qty} {status} {reason}")
-        else:
-            conversation.append(f"Loop: {path} | qty each: {qty} {status}")
-
-        if qty > 0:
-            first_from, _, out_resource = loop[0]
-            in_edge = next(edge for edge in loop if edge[1] == first_from)
-            _, in_from, in_resource = in_edge
-            loop_deal = {
-                "offer": {out_resource: qty},
-                "request": {in_resource: qty},
-            }
-            loop_ids = [edge[0] for edge in loop]
-            _deploy_from_deal(
-                loop_deal,
-                first_from,
-                in_from,
-                note="multilateral loop",
-                loop_ids=loop_ids
-            )
-            
-    log_conversation([a.agent_id for a in loop_agents], {a.agent_id: a for a in loop_agents}, conversation)
-
-    return conversation, contract_metadata
+        one_random_initiator_round(agents, pairs, max_bilateral_rounds, records,
+                                   rng=rng, conversation=conversation)
+    # Bilateral results never authorise a cycle. Build and approve fresh terms.
+    for loop in find_trade_loops(agents, max_cycle_length):
+        proposal = loop_proposal(loop, by_id)
+        if proposal is None:
+            continue
+        agreed = _attempt(proposal, by_id, conversation, records)
+        _event(conversation, "negotiation", rounds=1, agreed=agreed, negotiation_kind="loop")
+    for record in records:
+        record["run_id"] = conversation.run_id
+        record["timestamp"] = datetime.now(timezone.utc).isoformat()
+        if record_on_chain:
+            try:
+                if recorder is None:
+                    from blockchain.contract_manager import record_trade
+                    recorder = record_trade
+                record["contract_address"] = recorder(record)
+                record["blockchain_status"] = "recorded"
+            except Exception as exc:
+                # Off-chain execution stands; recording failure never executes again.
+                record["blockchain_status"] = "failed"
+                record["blockchain_error"] = f"{type(exc).__name__}: {exc}"
+                conversation.append(f"SYSTEM: Blockchain recording failed for {record['proposal_id']}: {exc}")
+                _event(conversation, "recording_error", message="The trade completed, but its blockchain record could not be saved.")
+        if persist:
+            from utils.history_store import save_trade_to_history
+            try:
+                save_trade_to_history(record)
+            except Exception as exc:
+                record["persistence_error"] = str(exc)
+                conversation.append(f"SYSTEM: Could not persist trade: {exc}")
+    conversation.metrics = summarize_run(agents, before, remaining_before, conversation.events, records)
+    conversation.metrics["run_id"] = conversation.run_id
+    return conversation, records

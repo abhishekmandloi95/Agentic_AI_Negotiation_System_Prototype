@@ -1,427 +1,153 @@
-import streamlit as st
-import yaml
-from negotiation.loop_trader import find_trade_loops
-from negotiation.protocol import run_negotiation_simulation
-from agents.base_agent import LLMNegotiationAgent
-import networkx as nx
-from blockchain.contract_manager import DEPLOY_LOGS
-from market.service import service as market_insights
-import requests
-from utils.history_store import load_trade_history
-from web3 import Web3
+"""Streamlit prototype UI. All execution and metrics live outside the UI."""
 import json
-import pandas as pd
-import copy
+import os
+import streamlit as st
+from agents.base_agent import LLMNegotiationAgent, RuleDecisionClient, OllamaDecisionClient, OpenAIDecisionClient
+from blockchain.contract_manager import read_record
+from market.service import MarketInsightsService
 from metrics.evaluation import evaluate
-from utils.history_store import create_conversation_log, append_conversation_line
+from negotiation.loop_trader import find_trade_loops
+from negotiation.protocol import load_agents, run_negotiation_simulation
+from utils.history_store import (load_trade_history, create_conversation_log,
+                                 append_conversation_line)
+from utils.paths import ROOT
+from utils.chat_view import render_conversation
 
-with st.expander("📜 View Trade Contracts"):
-    st.header("📜 Deployed Trade Contracts")
+st.set_page_config(page_title="Multi-Agent Negotiation", layout="wide")
+st.title("Multi-Agent Negotiation Viewer")
 
-    show_history = st.toggle("Include historical trades", value=False)
-
-    contracts_to_render = []
-
-    if show_history:
-        contracts_to_render = load_trade_history()
-    else:
-        in_progress = st.session_state.get("in_progress_contracts", [])
-        current = st.session_state.get("current_contracts", [])
-        live_contracts = [c for c in current if c.get("source") == "live"]
-        contracts_to_render = in_progress + live_contracts
-
-    contracts_to_render = [c for c in contracts_to_render if c]  # remove None/empty
-
-    if not contracts_to_render:
-        st.info("No contracts to show.")
-    else:
-        for i, trade in enumerate(contracts_to_render):
-            if not trade.get("contract_address"):
-                st.subheader(f"📝 Simulated Contract {i+1}")
-                st.markdown(f"""
-                - **Initiator**: {trade['initiator']}
-                - **Responder**: {trade['responder']}
-                - **Service Given**: {trade['service_given']} ({trade['quantity_given']})
-                - **Service Received**: {trade['service_received']} ({trade['quantity_received']})
-                """)
-                continue
-            st.subheader(f"🔗 Trade {i+1}: {trade['contract_address']}")
-            st.markdown(f"""
-            - **Initiator**: {trade['initiator']}
-            - **Responder**: {trade['responder']}
-            - **Service Given**: {trade['service_given']} ({trade['quantity_given']})
-            - **Service Received**: {trade['service_received']} ({trade['quantity_received']})
-            """)
-            # Try live contract read
-            try:
-                contract = web3.eth.contract(address=trade['contract_address'], abi=abi)
-                service = contract.functions.serviceGiven().call()
-                st.success(f"✅ Contract live — service given: {service}")
-            except Exception as e:
-                st.warning(f"⚠️ Contract not readable (might be expired): {e}")
-    
-def render_agents_table():
-    agents_data = []
-    for agent in st.session_state.get("agents", []):
-        inventory_str = "\n".join([f"{k}: {v}" for k, v in agent.inventory.items()])
-        needs_str = "\n".join([f"{k}: {v}" for k, v in agent.needs.items()])
-        agents_data.append({
-            "Agent": agent.agent_id,
-            "Inventory": inventory_str,
-            "Needs": needs_str
-        })
-    df = pd.DataFrame(agents_data)
-    agents_table_container.markdown("### 📌 Agent Inventory and Needs")
-    agents_table_container.dataframe(df, use_container_width=True)
-
-if "current_contracts" not in st.session_state:
-    st.session_state.current_contracts = []
-
-# --- Load agent profiles ---
-with open("data/profiles.yaml") as f:
-    agent_profiles = yaml.safe_load(f)["agents"]
-
-with open("blockchain/TradeAgreement.json") as f:
-    abi = json.load(f)["abi"]
-
-web3 = Web3(Web3.HTTPProvider("http://127.0.0.1:7545"))
-
-agent_ids = [agent["id"] for agent in agent_profiles]
-
-if "agents" not in st.session_state:
-    agents_by_id = {
-        p["id"]: LLMNegotiationAgent(
-            agent_id  = p["id"],
-            style     = p.get("style", "neutral"),
-            inventory = p["inventory"].copy(),
-            needs     = p["needs"].copy()
-        )
-        for p in agent_profiles
-    }
-    st.session_state["agents"] = list(agents_by_id.values())
-
-
-st.title(" Multi-Agent Negotiation Viewer")
-
-# Sidebar refresh control
 with st.sidebar:
-    agents_table_container = st.container()  # ✅ Move here to show sidebar table
-    ganache_status = False
-    def is_ganache_running(url="http://127.0.0.1:7545"):
-        try:
-            payload = {
-                "jsonrpc": "2.0",
-                "method": "web3_clientVersion",
-                "params": [],
-                "id": 1
-            }
-            response = requests.post(url, json=payload, timeout=1)
-            if response.status_code == 200 and "result" in response.json():
-                return True
-            return False
-        except requests.exceptions.RequestException:
-            return False
+    st.header("Simulation settings")
+    engine = st.selectbox("Decision engine", ["Ollama / Mistral", "OpenAI / GPT", "Deterministic baseline"])
+    model = ""
+    api_key = ""
+    if engine == "Ollama / Mistral":
+        model = st.text_input("Ollama model", value=os.getenv("OLLAMA_MODEL", "mistral"), key="ollama_model").strip()
+    elif engine == "OpenAI / GPT":
+        model = st.text_input("OpenAI model", value=os.getenv("OPENAI_MODEL", "gpt-5"), key="openai_model").strip()
+        api_key = st.text_input("OpenAI API key", type="password", key="openai_api_key",
+                                help="Leave blank to use OPENAI_API_KEY from your environment.").strip() or os.getenv("OPENAI_API_KEY", "")
+        st.caption("Starting a negotiation sends its context to OpenAI and uses your API account.")
+    st.caption("Changing the provider or model resets inventories and memory.")
+    memory_enabled = st.checkbox("Use RAG memory", value=False)
+    prophet_enabled = st.checkbox("Use Prophet forecasting", value=False)
+    auto_accept = st.checkbox("Allow automatic acceptance within 10% of needs", value=False)
+    record_on_chain = st.checkbox("Record executed trades on Ganache", value=False)
+    seed = st.number_input("Random seed", min_value=0, value=42, step=1)
+    n_rounds = st.slider("Bilateral negotiation attempts", 0, 20, 3)
+    reply_rounds = st.slider("Proposal rounds per bilateral negotiation", 1, 10, 3)
+    max_loop_len = st.slider("Maximum agents per cycle", 2, 9, 4)
+    mode = st.radio("Scope", ["All agents", "Each candidate cycle separately"])
+    reset = st.button("Reset inventories and memory")
+    st.caption("Reset starts a fresh experiment. Continuing preserves current inventories and memory.")
+    st.caption("RAG requires optional embedding dependencies. The baseline tests mechanics; it does not measure LLM or RAG quality.")
 
-    ganache_status = is_ganache_running()
-    ganache_html = f"""
-        <div style="
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            background-color: {'#22c55e' if ganache_status else '#ef4444'};
-            color: white;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-weight: bold;
-            z-index: 9999;
-            box-shadow: 0px 2px 6px rgba(0,0,0,0.2);
-        ">
-            {'🟢 Ganache: Online' if ganache_status else '🔴 Ganache: Offline'}
-        </div>
-    """
-    st.markdown(ganache_html, unsafe_allow_html=True)
+settings = (engine, model, memory_enabled, seed)
+if reset or st.session_state.get("agent_settings") != settings:
+    market = MarketInsightsService(seed=seed)
+    client = (RuleDecisionClient() if engine == "Deterministic baseline" else
+              OpenAIDecisionClient(model=model, api_key=api_key) if engine == "OpenAI / GPT" else
+              OllamaDecisionClient(model=model, seed=seed))
+    agents = load_agents(
+        market=market, memory_enabled=memory_enabled, seed=seed,
+        decision_client=client)
+    market.configure({r for a in agents for r in set(a.inventory) | set(a.needs)})
+    st.session_state.update(agents=agents, market=market, agent_settings=settings,
+                            current_contracts=[], conversation_log=[], conversation_events=[], metrics=[], has_run=False)
+st.session_state.setdefault("conversation_events", [])
+agents = st.session_state.agents
+market = st.session_state.market
+market.set_use_prophet(prophet_enabled)
+for agent in agents:
+    agent.auto_accept = auto_accept
+    if engine == "OpenAI / GPT":
+        agent.chain.api_key = api_key
 
-    st.markdown("### Agent Controls")
-    refresh_clicked = st.checkbox("🔄 Show updated Agent Table", key="refresh_agents_table_checkbox")
-    if refresh_clicked:
-        render_agents_table()
+st.dataframe([{"Agent": a.agent_id, "Style": a.style,
+               "Inventory": json.dumps(a.inventory), "Remaining needs": json.dumps(a.needs),
+               "Fulfilled units": a.get_utility()} for a in agents], use_container_width=True)
 
-    st.markdown("### Available Agents:")
-    st.write(", ".join(agent_ids))
-
-    if st.sidebar.button("🧹 Clear Conversation Log"):
-        st.session_state["conversation_log"] = []
-
-
-    # Commented out to avoid double rendering on refresh
-    # if st.session_state.get("refresh_agents_table"):
-    #     render_agents_table()
-    #     st.session_state["refresh_agents_table"] = False
-
-# --- Build graph based on inventory and needs ---
-def build_graph(agents):
-    G = nx.DiGraph()
-    for agent in agents:
-        for need in agent["needs"]:
-            for supplier in agents:
-                if agent["id"] != supplier["id"] and need in supplier["inventory"]:
-                    if supplier["inventory"][need] >= agent["needs"][need]:
-                        G.add_edge(agent["id"], supplier["id"])
-    return G
-
-# --- Create LLM Agent instances (using session state only once) ---
-def build_agents_by_id(profiles):
-    if "agents" not in st.session_state:
-        st.session_state["agents"] = [
-            LLMNegotiationAgent(
-                agent_id=p["id"],
-                style=p.get("style", "neutral"),
-                inventory=p["inventory"].copy(),
-                needs=p["needs"].copy()
-            )
-            for p in profiles
-        ]
-    
-    # ✅ Build and return mapping from existing session-state agents
-    return {agent.agent_id: agent for agent in st.session_state["agents"]}
-
-# --- Automatic Loop Run ---
-mode = st.radio("Select Negotiation Mode:", ["Run each loop separately", "Run one large negotiation"])
-
-#1️Add two sliders before the button
-n_rounds     = st.slider("How many bilateral rounds?", 1, len(agent_ids), len(agent_ids))
-max_loop_len = st.slider("Max agents in a loop?",    2, len(agent_ids), len(agent_ids))
-
-max_bilateral_rounds = n_rounds
-
-if st.button("Start Negotiation"):
-    st.session_state["start_negotiation"] = True
-
-if st.session_state.get("start_negotiation"):
-    if not is_ganache_running():
-        st.error("⚠️ Ganache is offline. Please start Ganache first.")
-        st.session_state["start_negotiation"] = False  # ✅ reset trigger
-        st.stop()
-
-    # Conversation log file creation
+ready = engine == "Deterministic baseline" or bool(model and (engine != "OpenAI / GPT" or api_key))
+if not ready:
+    st.info("Enter a model name and, for OpenAI, an API key before starting.")
+st.session_state.setdefault("has_run", bool(st.session_state.get("metrics")))
+run_label = "Continue negotiation" if st.session_state.has_run else "Start negotiation"
+if st.button(run_label, key="run_negotiation", disabled=not ready):
+    st.session_state.has_run = True
+    st.session_state.current_contracts = []
+    st.session_state.conversation_log = []
+    st.session_state.conversation_events = []
+    st.session_state.metrics = []
     log_path = create_conversation_log()
-    st.session_state["conversation_log_path"] = log_path
-    if "conversation_log" in st.session_state:
-        del st.session_state["conversation_log"]
-
-    all_agents = st.session_state["agents"]
-    agents_by_id = {agent.agent_id: agent for agent in all_agents}
-
-    # --- Market configuration (dynamic, no hardcoded resources)
-    all_resources = set()
-    for a in all_agents:
-        all_resources.update(a.inventory.keys())
-        all_resources.update(a.needs.keys())
-
-    market_insights.configure(all_resources)
-    market_insights.update_market()  # advance one step this run
-
-    if mode == "Run each loop separately":
-        loops = find_trade_loops(all_agents, max_cycle_length=max_loop_len)
-        if not loops:
-            st.error("No valid negotiation loops found.")
-        else:
-            for loop in loops:
-                ids_in_loop = [edge[0] for edge in loop]
-                cycle_banner = " → ".join(ids_in_loop + [ids_in_loop[0]])
-                st.success(f"Running negotiation for loop: {cycle_banner}")
-                market_insights.update_market()
-                conversation, contract_metadata = run_negotiation_simulation(
-                    loop_ids=ids_in_loop,
-                    agents=all_agents,
-                    rounds=n_rounds,
-                    max_cycle_length=max_loop_len,
-                    max_bilateral_rounds=n_rounds
-                )
-                if "in_progress_contracts" not in st.session_state:
-                    st.session_state["in_progress_contracts"] = []
-                st.session_state["in_progress_contracts"].extend(contract_metadata)
-                if "current_contracts" not in st.session_state:
-                    st.session_state["current_contracts"] = []
-                for item in contract_metadata:
-                    item["source"] = "live"
-                st.session_state["current_contracts"].extend(contract_metadata)
-
-                if "conversation_log" not in st.session_state:
-                    st.session_state["conversation_log"] = []
-
-                for line in conversation:
-                    if "Running negotiation for loop:" in line:
-                        st.success(line)
-                    else:
-                        st.markdown(line)
-                    st.session_state["conversation_log"].append(line)
-                    # Try extracting metadata for structured logging
-                    try:
-                        if ": " in line:
-                            agent, msg = line.split(": ", 1)
-                            exchange_details = None
-                            if "⇄" in msg or "exchange" in msg.lower():
-                                exchange_details = msg
-                            append_conversation_line(agent, msg, exchange_details, path=st.session_state.get("conversation_log_path"))
-                    except Exception as e:
-                        print("Logging error:", e)
-                st.markdown("---")
+    st.session_state.conversation_log_path = str(log_path)
+    market.update_market()
+    if mode == "All agents":
+        groups = [None]
     else:
-        st.success("Running one large negotiation with all agents.")
-        market_insights.update_market()
-        conversation, contract_metadata = run_negotiation_simulation(
-            loop_ids=[],
-            agents=all_agents,
-            rounds=n_rounds,
-            max_cycle_length=max_loop_len,
-            max_bilateral_rounds=n_rounds
-        )
-        if "in_progress_contracts" not in st.session_state:
-            st.session_state["in_progress_contracts"] = []
-        st.session_state["in_progress_contracts"].extend(contract_metadata)
-        if "current_contracts" not in st.session_state:
-            st.session_state["current_contracts"] = []
-        for item in contract_metadata:
-            item["source"] = "live"
-        st.session_state["current_contracts"].extend(contract_metadata)
-
-        if "conversation_log" not in st.session_state:
-            st.session_state["conversation_log"] = []
-
-        for line in conversation:
-            if "Running negotiation for loop:" in line:
-                st.success(line)
-            else:
-                st.markdown(line)
-            st.session_state["conversation_log"].append(line)
-            # Try extracting metadata for structured logging
+        cycles = find_trade_loops(agents, max_loop_len)
+        groups = [list(ids) for ids in dict.fromkeys(tuple(sorted(f for f, _, _ in loop)) for loop in cycles)]
+    if not groups:
+        st.info("No candidate cycles are available with the current inventories.")
+    with st.spinner("Negotiating exact proposals…"):
+        for index, ids in enumerate(groups):
             try:
-                if ": " in line:
-                    agent, msg = line.split(": ", 1)
-                    exchange_details = None
-                    if "⇄" in msg or "exchange" in msg.lower():
-                        exchange_details = msg
-                    append_conversation_line(agent, msg, exchange_details, path=st.session_state.get("conversation_log_path"))
-            except Exception as e:
-                print("Logging error:", e)
+                conversation, records = run_negotiation_simulation(
+                    ids, agents=agents, rounds=n_rounds, max_cycle_length=max_loop_len,
+                    max_bilateral_rounds=reply_rounds, seed=seed + index,
+                    record_on_chain=record_on_chain, persist=True)
+                # Save session results before any optional conversation-file write.
+                st.session_state.current_contracts.extend(records)
+                st.session_state.metrics.append(conversation.metrics)
+                st.session_state.conversation_log.extend(conversation)
+                st.session_state.conversation_events.extend(conversation.events)
+                for line in conversation:
+                    agent, separator, message = line.partition(":")
+                    append_conversation_line(agent if separator else "SYSTEM",
+                                             message.strip() if separator else line, path=log_path)
+            except Exception as exc:
+                st.error(f"Simulation or logging failed: {type(exc).__name__}: {exc}")
+    st.rerun()
 
-    st.markdown("### 💬 Agent Conversations")
-    for line in st.session_state.get("conversation_log", []):
-        if "Running negotiation for loop:" in line:
-            st.success(line)
+with st.expander("Agent conversations", expanded=True):
+    render_conversation(st.session_state.conversation_events)
+
+with st.expander("Technical log", expanded=False):
+    for line in st.session_state.conversation_log:
+        st.text(line)
+
+with st.expander("Trade records", expanded=True):
+    show_history = st.toggle("Include historical trades", value=False)
+    try:
+        records = load_trade_history() if show_history else st.session_state.current_contracts
+    except (ValueError, OSError) as exc:
+        st.error(f"History could not be loaded: {exc}")
+        records = []
+    if not records:
+        st.info("No executed trades to show.")
+    for index, record in enumerate(records):
+        st.markdown(f"**Trade {index + 1} — {record.get('kind', 'legacy')}**")
+        if "transfers" in record:
+            st.dataframe(record["transfers"], use_container_width=True)
+            st.caption(f"Proposal: {record['proposal_id']} | Execution: {record['status']} | Blockchain: {record['blockchain_status']}")
         else:
-            st.markdown(line)
+            st.json(record)
+        if record.get("blockchain_error"):
+            st.warning(record["blockchain_error"])
+        address = record.get("contract_address")
+        if address:
+            st.code(address)
+            if st.button("Verify on-chain record", key=f"verify-{index}-{address}"):
+                try:
+                    if "transfers" in record:
+                        st.json(read_record(address))
+                    else:
+                        from blockchain.contract_manager import get_w3
+                        abi = json.loads((ROOT / "blockchain/TradeAgreement.json").read_text())["abi"]
+                        legacy = get_w3().eth.contract(address=address, abi=abi)
+                        st.write(legacy.functions.serviceGiven().call())
+                except Exception as exc:
+                    st.warning(f"On-chain record is not readable: {exc}")
 
-    # st.markdown("### 📦 Updated Inventories After Negotiation")
-    # for agent in all_agents:
-    #     st.write(f"**{agent.agent_id}** → {agent.inventory}")
-    st.session_state["start_negotiation"] = False  # ✅ reset trigger
-    st.session_state["in_progress_contracts"] = []
-
-
-# ❌ Moved negotiation block to respond to st.session_state["start_negotiation"]
-# to prevent loss during rerun (e.g. from sidebar table refresh)
-
-# if st.button("Start Negotiation"):
-
-#     if not is_ganache_running():
-#         st.error("⚠️ Ganache is offline. Please start Ganache first.")
-#         st.stop()
-
-#     all_agents = st.session_state["agents"]
-#     agents_by_id = {agent.agent_id: agent for agent in all_agents}
-
-#     # --- Market configuration (dynamic, no hardcoded resources)
-#     all_resources = set()
-#     for a in all_agents:
-#         all_resources.update(a.inventory.keys())
-#         all_resources.update(a.needs.keys())
-
-#     market_insights.configure(all_resources)
-#     market_insights.update_market()  # advance one step this run
-    
-#     if mode == "Run each loop separately":
-#         loops = find_trade_loops(all_agents, max_cycle_length=max_loop_len)
-#         if not loops:
-#             st.error("No valid negotiation loops found.")
-#         else:
-#             for loop in loops:
-#                  # 1) extract the unique IDs in this loop
-#                  ids_in_loop = [edge[0] for edge in loop]
-
-#                  # 2) display the full cycle once
-#                  cycle_banner = " → ".join(ids_in_loop + [ids_in_loop[0]])
-#                  st.success(f"Running negotiation for loop: {cycle_banner}")
- 
-#                  # 3) run negotiation *only* among those agents
-#                  market_insights.update_market()
-#                  conversation = run_negotiation_simulation(
-#                     loop_ids=ids_in_loop,
-#                     agents=all_agents,  # ✅ pass live agents
-#                     rounds=n_rounds,
-#                     max_cycle_length=max_loop_len,
-#                     max_bilateral_rounds=max_bilateral_rounds
-#                 )
-#                  for line in conversation:
-#                      st.markdown(line)
-                
-#                  # Removed render_agents_table calls here
-#                  # if st.session_state.refresh_agents_table:
-#                  #    render_agents_table()
-#                  #    st.session_state.refresh_agents_table = False
-
-#                  st.markdown("---")
-            
-#     else:
-#         # Run one large negotiation
-#         st.success("Running one large negotiation with all agents.")
-        
-#         market_insights.update_market()
-#         conversation = run_negotiation_simulation(
-#             loop_ids=[],
-#             agents=all_agents,  # ✅ pass live agents
-#             rounds=n_rounds,
-#             max_cycle_length=max_loop_len,
-#             max_bilateral_rounds=max_bilateral_rounds
-#         )
-#         for line in conversation:
-#             st.markdown(line)
-        
-#         # Removed render_agents_table calls here
-#         # if st.session_state.refresh_agents_table:
-#         #     render_agents_table()
-#         #     st.session_state.refresh_agents_table = False
-
-#     st.markdown("### 📦 Updated Inventories After Negotiation")
-#     for agent in all_agents:
-#         st.write(f"**{agent.agent_id}** → {agent.inventory}")
-
-# # --- Manual Loop (Debugging Mode) ---
-# with st.expander("🛠️ Manually Select Agents"):
-#     selected_agents = st.multiselect("Choose agent IDs:", agent_ids)
-#     if st.button("▶️ Run Manual Negotiation"):
-#         if len(selected_agents) < 2:
-#             st.warning("Please select at least 2 agents.")
-#         else:
-#             st.success(f"Running manual negotiation: {' → '.join(selected_agents)}")
-            
-#             market_insights.update_market()
-#             conversation = run_negotiation_simulation(selected_agents)
-#             for line in conversation:
-#                 if ": " in line:
-#                     agent, msg = line.split(": ", 1)
-#                     st.markdown(msg)
-#                 else:
-#                     st.markdown(line)
-
-# if DEPLOY_LOGS:
-#     st.subheader("Contracts deployed in this run")
-#     for addr, human in DEPLOY_LOGS.items():
-#         st.code(f"{human}   ({addr})") #shows the address as well
-
-metrics = evaluate(total_possible_utility=100.0)
-
-with st.expander("📊 Evaluation Metrics"):
-    for k, v in metrics.items():
-        st.write(f"**{k}**: {v}")
+with st.expander("Evaluation metrics", expanded=True):
+    st.json(evaluate(st.session_state.metrics))
+    st.caption("Metrics cover the most recent button run. Fulfillment measures units of outstanding demand satisfied, not monetary profit.")

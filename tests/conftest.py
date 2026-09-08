@@ -1,12 +1,17 @@
 import pytest
+from agents.base_agent import LLMNegotiationAgent, RuleDecisionClient
+from market.service import MarketInsightsService
 
 @pytest.fixture
-def sample_agent_config():
-    def _make(agent_id):
-        return {
-            "agent_id": agent_id,
-            "style": "neutral",
-            "inventory": {"analytics": 100},
-            "needs": {"devops": 50},
-        }
-    return _make
+def market():
+    value = MarketInsightsService(seed=42)
+    value.set_use_prophet(False)
+    return value
+
+@pytest.fixture
+def make_agent(market):
+    def make(aid, inventory, needs, **kwargs):
+        return LLMNegotiationAgent(aid, "neutral", inventory, needs,
+            memory_enabled=kwargs.pop("memory_enabled", False), market=market,
+            decision_client=kwargs.pop("decision_client", RuleDecisionClient()), **kwargs)
+    return make

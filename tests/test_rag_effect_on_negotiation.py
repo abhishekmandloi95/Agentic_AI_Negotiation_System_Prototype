@@ -1,35 +1,33 @@
-from negotiation.protocol import run_negotiation_simulation
-from agents.base_agent import LLMNegotiationAgent
+from agents.base_agent import RuleDecisionClient
+from negotiation.protocol import negotiate_pair
 
-def test_rag_enables_better_negotiation():
+class Memory:
+    def __init__(self):
+        self.rows = []
+    def retrieve(self, *args):
+        return ["Previously accepted 2 wood for 2 gold"]
+    def add_snippet(self, *args):
+        self.rows.append(args)
 
-    # Agent setup
-    agents_with_rag = [
-        LLMNegotiationAgent("A", "strategic", {"gold": 3}, {"wood": 2}, memory_enabled=True),
-        LLMNegotiationAgent("B", "strategic", {"wood": 3}, {"gold": 2}, memory_enabled=True),
-    ]
-    agents_without_rag = [
-        LLMNegotiationAgent("A", "strategic", {"gold": 3}, {"wood": 2}, memory_enabled=False),
-        LLMNegotiationAgent("B", "strategic", {"wood": 3}, {"gold": 2}, memory_enabled=False),
-    ]
+class Capture(RuleDecisionClient):
+    def __init__(self): self.inputs = []
+    def invoke(self, inputs):
+        self.inputs.append(inputs)
+        return super().invoke(inputs)
 
-    # Run with RAG
-    _, contracts_rag = run_negotiation_simulation(
-        loop_ids=["A", "B"],
-        agents=agents_with_rag,
-        rounds=5,
-        max_cycle_length=2,
-        max_bilateral_rounds=5
-    )
+def test_rag_reaches_prompt_and_stores_outcome(make_agent):
+    memory, client = Memory(), Capture()
+    a = make_agent("A", {"gold": 4}, {"wood": 4}, memory_enabled=True, memory=memory, decision_client=client)
+    b = make_agent("B", {"wood": 4}, {"gold": 4})
+    records = []
+    negotiate_pair(a, b, set(), 1, records)
+    assert "Previously accepted" in client.inputs[0]["prompt"]
+    assert len(memory.rows) == 1 and '"outcome": "executed"' in memory.rows[0][2]
+    assert len(records) == 1
 
-    # Run without RAG
-    _, contracts_no_rag = run_negotiation_simulation(
-        loop_ids=["A", "B"],
-        agents=agents_without_rag,
-        rounds=5,
-        max_cycle_length=2,
-        max_bilateral_rounds=5
-    )
-
-    # Assert: RAG does not reduce number of contracts
-    assert len(contracts_rag) >= len(contracts_no_rag)
+def test_disabled_memory_is_not_used(make_agent):
+    memory, client = Memory(), Capture()
+    a = make_agent("A", {"gold": 4}, {"wood": 4}, memory=memory, decision_client=client)
+    b = make_agent("B", {"wood": 4}, {"gold": 4})
+    negotiate_pair(a, b, set(), 1, [])
+    assert client.inputs[0]["retrieved_memory"] == [] and memory.rows == []

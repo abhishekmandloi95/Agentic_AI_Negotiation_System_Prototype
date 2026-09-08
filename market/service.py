@@ -5,6 +5,8 @@ from typing import Iterable, Optional, List, Dict
 from datetime import datetime, timedelta
 import math
 import random
+import hashlib
+import logging
 
 import pandas as pd
 from .forecaster import fit_and_forecast, ProphetUnavailable
@@ -59,7 +61,11 @@ class MarketInsightsService:
       - MarketInsightsService.from_config({...})
       - _MARKET.context(services)  -> object with .by_service[svc].price_scalar
     """
-    def __init__(self):
+    def __init__(self, seed=0, as_of=None):
+        self.seed = seed
+        self.as_of = as_of or datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        self._rng = random.Random(seed)
+        self._forecast_cache = {}
         self.history: Dict[str, pd.DataFrame] = {}
         self.resources: List[str] = []
         self._cache: Dict[tuple[str, int], str] = {}
@@ -87,21 +93,21 @@ class MarketInsightsService:
         if resource in self.history and not self.history[resource].empty:
             return
 
-        base = 80.0 + (hash(resource) % 40)  # deterministic 80..119
+        base = 80.0 + (int.from_bytes(hashlib.sha256(resource.encode()).digest()[:4], "big") % 40)  # deterministic 80..119
         mu = 0.05
         sigma = 0.30
         dt = 1.0 / 365.0
         sqrt_dt = math.sqrt(dt)
 
         prices = [float(base)]
-        rnd = random.Random(hash(resource) & 0xFFFFFFFF)
+        rnd = random.Random(f"{self.seed}:{resource}")
 
         for _ in range(days - 1):
             z = rnd.gauss(0.0, 1.0)
             next_price = prices[-1] * math.exp((mu - 0.5 * sigma * sigma) * dt + sigma * sqrt_dt * z)
             prices.append(max(next_price, 1e-9))
 
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = self.as_of
         dates = [today - timedelta(days=(days - 1 - i)) for i in range(days)]
         self.history[resource] = pd.DataFrame({"ds": dates, "y": prices})
 
@@ -120,7 +126,7 @@ class MarketInsightsService:
 
         for r, df in self.history.items():
             last_price = float(df["y"].iloc[-1])
-            z = random.gauss(0.0, 1.0)
+            z = self._rng.gauss(0.0, 1.0)
             next_price = last_price * math.exp((mu - 0.5 * sigma * sigma) * dt + sigma * sqrt_dt * z)
             next_price = max(next_price, 1e-9)
 
@@ -135,10 +141,23 @@ class MarketInsightsService:
             )
 
         self._cache.clear()
+        self._forecast_cache.clear()
+
+    def _recent_trend(self, df) -> str:
+        recent = df.tail(min(7, len(df)))
+        if len(recent) < 2:
+            return "stable"
+        start, end = float(recent["y"].iloc[0]), float(recent["y"].iloc[-1])
+        if end > start * 1.02:
+            return "up"
+        elif end < start * 0.98:
+            return "down"
+        else:
+            return "stable"
 
     def get_trend(self, resource: str, days_ahead: int = 5) -> str:
         """Return 'up' | 'down' | 'stable' using Prophet forecast or a simple fallback."""
-        key = (resource, int(days_ahead))
+        key = self._history_key(resource, days_ahead)
         if key in self._cache:
             return self._cache[key]
 
@@ -147,8 +166,12 @@ class MarketInsightsService:
             self._cache[key] = "stable"
             return "stable"
 
+        if not self._use_prophet:
+            self._cache[key] = self._recent_trend(df)
+            return self._cache[key]
+
         try:
-            fc = fit_and_forecast(df, horizon_days=days_ahead)
+            fc = self._forecast(resource, days_ahead)
             if fc is None or fc.empty:
                 self._cache[key] = "stable"
                 return "stable"
@@ -162,29 +185,43 @@ class MarketInsightsService:
                 self._cache[key] = "stable"
             return self._cache[key]
         except ProphetUnavailable:
-            recent = df.tail(min(7, len(df)))
-            if len(recent) < 2:
-                self._cache[key] = "stable"
-                return "stable"
-            start, end = float(recent["y"].iloc[0]), float(recent["y"].iloc[-1])
-            if end > start * 1.02:
-                self._cache[key] = "up"
-            elif end < start * 0.98:
-                self._cache[key] = "down"
-            else:
-                self._cache[key] = "stable"
+            self._cache[key] = self._recent_trend(df)
             return self._cache[key]
         except Exception:
+            logging.getLogger(__name__).exception("Forecast failed for %s", resource)
             self._cache[key] = "stable"
             return "stable"
 
+    def _history_key(self, resource, days_ahead):
+        df = self.history.get(resource)
+        fingerprint = None if df is None else hashlib.sha256(
+            pd.util.hash_pandas_object(df, index=True).values.tobytes()).hexdigest()
+        return resource, max(1, int(days_ahead)), fingerprint, self._use_prophet
+
+    def _forecast(self, resource, days_ahead):
+        key = self._history_key(resource, days_ahead)
+        if key not in self._forecast_cache:
+            # Keep only the current history version for each resource/horizon.
+            self._forecast_cache = {k: v for k, v in self._forecast_cache.items()
+                                    if k[:2] != key[:2]}
+            try:
+                self._forecast_cache[key] = fit_and_forecast(self.history[resource], horizon_days=key[1])
+            except Exception as exc:
+                self._forecast_cache[key] = exc
+        result = self._forecast_cache[key]
+        if isinstance(result, Exception):
+            raise result
+        return result.copy() if result is not None else None
+
     def get_forecast(self, resource: str, days_ahead: int = 5) -> Optional[pd.DataFrame]:
-        """Convenience accessor to the full Prophet forecast frame."""
+        """Return the Prophet forecast, or None when forecasting is disabled."""
+        if not self._use_prophet:
+            return None
         df = self.history.get(resource)
         if df is None or df.empty:
             return None
         try:
-            return fit_and_forecast(df, horizon_days=days_ahead)
+            return self._forecast(resource, days_ahead)
         except Exception:
             return None
 
@@ -241,7 +278,10 @@ class MarketInsightsService:
         return self.context(services, days_ahead=days_ahead).lines
 
     def set_use_prophet(self, value: bool):
-        self._use_prophet = value
+        if self._use_prophet != value:
+            self._use_prophet = value
+            self._cache.clear()
+            self._forecast_cache.clear()
 
     def get_use_prophet(self) -> bool:
         return self._use_prophet

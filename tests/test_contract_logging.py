@@ -1,20 +1,17 @@
-import tempfile
-import os
-from utils.history_store import save_trade_history, load_test_trade_history
+import json
+from utils.history_store import (save_trade_history, load_test_trade_history,
+                                create_conversation_log, append_conversation_line, load_conversation_log)
 
-def test_contract_save_and_load_roundtrip():
-    contract = {
-        "initiator": "AgentA",
-        "responder": "AgentB",
-        "contract_address": "0x123abc",
-        "details": {"resource": "analytics", "quantity": 10}
-    }
+def test_contract_save_and_load_roundtrip(tmp_path):
+    path = tmp_path / "history.json"
+    save_trade_history([{"initiator":"A", "contract_address":"0x123"}], path)
+    assert load_test_trade_history(path)[0]["initiator"] == "A"
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, "contracts.json")
-        save_trade_history([contract], path)
-        loaded = load_test_trade_history(path)
-    
-    assert isinstance(loaded, list)
-    assert loaded[0]["initiator"] == "AgentA"
-    assert loaded[0]["contract_address"] == "0x123abc"
+def test_unique_logs_preserve_sessions(tmp_path):
+    first, second = create_conversation_log(tmp_path), create_conversation_log(tmp_path)
+    assert first != second
+    append_conversation_line("A", "one", path=first)
+    append_conversation_line("B", "two", {"quantity": 2}, path=first)
+    assert [x["message"] for x in load_conversation_log(first)] == ["one", "two"]
+    assert load_conversation_log(first)[1]["details"] == {"quantity": 2}
+    assert load_conversation_log(second) == []

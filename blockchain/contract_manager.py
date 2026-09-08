@@ -1,86 +1,56 @@
+"""Blockchain audit recording, separate from trade execution and UI state."""
 import json
-from utils.history_store import save_trade_to_history
-from web3 import Web3
-import streamlit as st
+import os
+from utils.paths import ROOT
 
-GANACHE_URL = "http://127.0.0.1:7545"
+GANACHE_URL = os.getenv("GANACHE_URL", "http://127.0.0.1:7545")
+DEPLOY_LOGS = {}
 
-# global container that other files can import
-DEPLOY_LOGS: dict[str, str] = {}        # addr → human-readable summary
-# ────────────────────────────────────────────────────────────────
+def get_w3():
+    from web3 import Web3
+    return Web3(Web3.HTTPProvider(GANACHE_URL, request_kwargs={"timeout": 10}))
 
-def deploy_contract(
-    *,
-    party_from:       str,
-    party_to:         str,
-    service_given:    str,
-    service_received: str,
-    qty_given:        int,
-    qty_received:     int,
-    note:             str = ""
-) -> str:
-    """
-    Deploy TradeAgreement (6-arg constructor) and store/print a summary.
-    """
-    w3 = Web3(Web3.HTTPProvider(GANACHE_URL))
+def _deploy(artifact_name, args, *, w3=None):
+    w3 = get_w3() if w3 is None else w3
     if not w3.is_connected():
-        raise ConnectionError(f"Ganache is not running on {GANACHE_URL}")
+        raise ConnectionError(f"Blockchain unavailable at {GANACHE_URL}")
+    target = ROOT / "blockchain" / artifact_name
+    if not target.exists():
+        raise FileNotFoundError("Compile TradeRecord first: python -m blockchain.compile_contract --install")
+    artifact = json.loads(target.read_text())
+    accounts = w3.eth.accounts
+    if not accounts:
+        raise RuntimeError("Blockchain has no unlocked recording account.")
+    contract = w3.eth.contract(abi=artifact["abi"], bytecode=artifact["bytecode"])
+    tx = contract.constructor(*args).transact({"from": accounts[0]})
+    receipt = w3.eth.wait_for_transaction_receipt(tx, timeout=120)
+    if receipt.status != 1 or not receipt.contractAddress:
+        raise RuntimeError("Contract deployment reverted.")
+    return receipt.contractAddress
 
-    with open("blockchain/TradeAgreement.json") as f:
-        artifact = json.load(f)
-
-    acct = w3.eth.accounts[0]
-    w3.eth.default_account = acct
-
-    TradeAgreement = w3.eth.contract(abi=artifact["abi"],
-                                     bytecode=artifact["bytecode"])
-
-    tx_hash = TradeAgreement.constructor(
-        party_from,
-        party_to,
-        service_given,
-        service_received,
-        qty_given,
-        qty_received
-    ).transact({"from": acct})
-
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    address = receipt.contractAddress
-
-    # build & save the one-line summary **inside** the function
-    summary = (f"{party_from} → {party_to} : "
-               f"{qty_given} {service_given} ⇄ "
-               f"{qty_received} {service_received}")
-    
-    human = note if note else summary      # note will carry the agent-ID text
-
-    print(f"Smart contract deployed at {address} | {human}")
-    DEPLOY_LOGS[address] = human           # <- human text for UI
-
-    save_trade_to_history({
-    "contract_address": address,
-    "initiator": party_from,
-    "responder": party_to,
-    "service_given": service_given,
-    "service_received": service_received,
-    "quantity_given": qty_given,
-    "quantity_received": qty_received
-    })
-
-    try:
-        if "current_contracts" not in st.session_state:
-            st.session_state.current_contracts = []
-
-        st.session_state.current_contracts.append({
-            "contract_address": address,
-            "initiator": party_from,
-            "responder": party_to,
-            "service_given": service_given,
-            "service_received": service_received,
-            "quantity_given": qty_given,
-            "quantity_received": qty_received
-        })
-    except Exception as e:
-        print("Warning: Could not update Streamlit session state. Reason:", e)
-
+def record_trade(record, *, w3=None):
+    if record.get("status") != "executed" or not record.get("transfers"):
+        raise ValueError("Only executed, complete trades can be recorded.")
+    # Stable payload excludes subsequent recording/persistence status.
+    payload = {k: record[k] for k in ("proposal_id", "kind", "transfers", "approvals", "status")}
+    participants = {t["giver"] for t in payload["transfers"]} | {t["receiver"] for t in payload["transfers"]}
+    if set(payload["approvals"]) != participants or any(
+        value != payload["proposal_id"] for value in payload["approvals"].values()
+    ):
+        raise ValueError("Missing or mismatched approvals.")
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    address = _deploy("TradeRecord.json", [serialized], w3=w3)
+    DEPLOY_LOGS[address] = payload["proposal_id"]
     return address
+
+def read_record(address, *, w3=None):
+    w3 = get_w3() if w3 is None else w3
+    artifact = json.loads((ROOT / "blockchain/TradeRecord.json").read_text())
+    contract = w3.eth.contract(address=address, abi=artifact["abi"])
+    return json.loads(contract.functions.recordJson().call())
+
+def deploy_contract(*, party_from, party_to, service_given, service_received,
+                    qty_given, qty_received, note=""):
+    """Legacy six-field recorder retained for old callers and historical records."""
+    return _deploy("TradeAgreement.json", [party_from, party_to, service_given,
+                                          service_received, qty_given, qty_received])

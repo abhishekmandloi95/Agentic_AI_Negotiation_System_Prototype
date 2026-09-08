@@ -1,60 +1,56 @@
-# evaluation.py
-import numpy as np
-from collections import defaultdict
+"""Per-run outcome measurements derived from executed transactions."""
+from statistics import mean
 
-negotiation_logs = []
-agent_utilities = defaultdict(float)
+def fairness(values):
+    values = sorted(values)
+    total = sum(values)
+    if not total:
+        return 0.0  # No fulfilled demand is not evidence of fair outcomes.
+    n = len(values)
+    gini = sum((2 * i - n - 1) * x for i, x in enumerate(values, 1)) / (n * total)
+    return 1 - gini
 
-def log_conversation(agent_ids, agents_by_id, conversation):
-    agreement_success = any("deal accepted" in msg.lower() for msg in conversation)
-
-    loop_log = {
-        "agents": agent_ids,
-        "agreed": agreement_success,
-        "rounds": len(conversation),
-        "messages": len(conversation),
-        "final_utilities": {
-            aid: agents_by_id[aid].get_utility() for aid in agent_ids
-        }
+def summarize_run(agents, before, remaining_before, events, records):
+    gains = {a.agent_id: a.get_utility() - before[a.agent_id] for a in agents}
+    negotiations = [e for e in events if e["kind"] == "negotiation"]
+    agreements = [e for e in negotiations if e["agreed"]]
+    messages = sum(e["kind"] == "decision" for e in events)
+    return {
+        "negotiations": len(negotiations),
+        "agreements": len(agreements),
+        "executed_trades": len(records),
+        "bilateral_trades": sum(r["kind"] == "bilateral" for r in records),
+        "loop_trades": sum(r["kind"] == "loop" for r in records),
+        "transferred_units": sum(t["quantity"] for r in records for t in r["transfers"]),
+        "agreement_rate": len(agreements) / len(negotiations) if negotiations else 0.0,
+        "joint_utility_gain": sum(gains.values()),
+        "normalized_utility_gain": sum(gains.values()) / remaining_before if remaining_before else 0.0,
+        "fairness": fairness(list(gains.values())),
+        "proposal_rounds": sum(e["rounds"] for e in negotiations),
+        "avg_rounds_to_agreement": mean(e["rounds"] for e in agreements) if agreements else 0.0,
+        "messages": messages,
+        "message_efficiency": len(records) / messages if messages else 0.0,
+        "decision_errors": sum(e["kind"] == "error" for e in events),
+        "memory_errors": sum(e["kind"] == "memory_error" for e in events),
+        "utility_gains": gains,
+        "blockchain_failures": sum(r["blockchain_status"] == "failed" for r in records),
     }
 
-    negotiation_logs.append(loop_log)
-
-    for aid in agent_ids:
-        agent_utilities[aid] += agents_by_id[aid].get_utility()
-
-def evaluate(total_possible_utility=100.0):
-    if not negotiation_logs:
+def evaluate(logs=None, total_possible_utility=None):
+    """Summarize explicitly supplied run metrics; no cross-session global state."""
+    logs = list(logs or [])
+    if not logs:
         return {}
-
-    agreements = [log for log in negotiation_logs if log["agreed"]]
-    joint_utilities = [sum(log["final_utilities"].values()) for log in agreements]
-
-    def gini(values):
-        if not values: return 0
-        sorted_vals = sorted(values)
-        height, area = 0, 0
-        for value in sorted_vals:
-            height += value
-            area += height - value / 2.
-        fair_area = height * len(values) / 2.
-        return (fair_area - area) / fair_area if fair_area else 0
-
-    fairness_scores = [1 - gini(list(log["final_utilities"].values())) for log in agreements]
-    concession_rates = []
-    for log in agreements:
-        utils = list(log["final_utilities"].values())
-        if utils:
-            concession_rates.append(np.mean(utils) / max(utils))
-
     return {
-        "Agreement Rate": round(len(agreements) / len(negotiation_logs), 3),
-        "Avg Joint Utility": round(np.mean(joint_utilities), 3) if joint_utilities else 0,
-        "Normalized Joint Utility": round(np.mean(joint_utilities) / total_possible_utility, 3) if joint_utilities else 0,
-        "Avg Fairness (1-Gini)": round(np.mean(fairness_scores), 3) if fairness_scores else 0,
-        "Avg Rounds to Agreement": round(np.mean([log["rounds"] for log in agreements]), 3) if agreements else 0,
-        "Avg Messages": round(np.mean([log["messages"] for log in agreements]), 3) if agreements else 0,
-        "Message Efficiency": round(len(agreements) / sum(log["messages"] for log in negotiation_logs), 3) if negotiation_logs else 0,
-        # "Avg Concession Rate": round(np.mean(concession_rates), 3) if concession_rates else 0,
-        "Avg Profit Per Agent": round(np.mean(list(agent_utilities.values())), 3) if agent_utilities else 0
+        "Runs": len(logs),
+        "Executed trades": sum(r["executed_trades"] for r in logs),
+        "Mean run agreement rate": round(mean(r["agreement_rate"] for r in logs), 3),
+        "Average fulfilled units per run": round(mean(r["joint_utility_gain"] for r in logs), 3),
+        "Average normalized fulfillment": round(mean(r["normalized_utility_gain"] for r in logs), 3),
+        "Average fairness (1-Gini)": round(mean(r["fairness"] for r in logs), 3),
+        "Decision messages": sum(r["messages"] for r in logs),
+        "Proposal rounds": sum(r["proposal_rounds"] for r in logs),
+        "Decision errors": sum(r["decision_errors"] for r in logs),
+        "Memory errors": sum(r["memory_errors"] for r in logs),
+        "Blockchain recording failures": sum(r["blockchain_failures"] for r in logs),
     }
