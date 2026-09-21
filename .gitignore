@@ -1,4 +1,3 @@
-# Local runtimes and generated output
 venv/
 .venv/
 __pycache__/

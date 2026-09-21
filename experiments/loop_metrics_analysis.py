@@ -1,4 +1,4 @@
-"""RAG comparison; raw paired runs are saved alongside the chart."""
+
 import json
 from experiments.benchmark import run_benchmark
 from utils.paths import ROOT

@@ -1,4 +1,4 @@
-"""Human-facing chat rendering; execution uses structured protocol events."""
+
 import streamlit as st
 
 def render_conversation(events):

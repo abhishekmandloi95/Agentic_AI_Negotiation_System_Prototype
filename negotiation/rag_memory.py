@@ -1,4 +1,4 @@
-"""Pair-specific FAISS memory with lazy, process-shared sentence embeddings."""
+
 from functools import lru_cache
 from threading import RLock
 import numpy as np

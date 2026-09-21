@@ -1,4 +1,4 @@
-"""Blockchain audit recording, separate from trade execution and UI state."""
+
 import json
 import os
 from utils.paths import ROOT
@@ -31,7 +31,7 @@ def _deploy(artifact_name, args, *, w3=None):
 def record_trade(record, *, w3=None):
     if record.get("status") != "executed" or not record.get("transfers"):
         raise ValueError("Only executed, complete trades can be recorded.")
-    # Stable payload excludes subsequent recording/persistence status.
+    
     payload = {k: record[k] for k in ("proposal_id", "kind", "transfers", "approvals", "status")}
     participants = {t["giver"] for t in payload["transfers"]} | {t["receiver"] for t in payload["transfers"]}
     if set(payload["approvals"]) != participants or any(
@@ -51,6 +51,6 @@ def read_record(address, *, w3=None):
 
 def deploy_contract(*, party_from, party_to, service_given, service_received,
                     qty_given, qty_received, note=""):
-    """Legacy six-field recorder retained for old callers and historical records."""
+    
     return _deploy("TradeAgreement.json", [party_from, party_to, service_given,
                                           service_received, qty_given, qty_received])

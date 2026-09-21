@@ -1,4 +1,4 @@
-"""Start local services, reuse healthy ones, stop only processes started here."""
+
 import json
 import os
 from pathlib import Path
@@ -64,7 +64,7 @@ def main():
           "--server.port", "7545", "--database.dbPath", str(Path.home() / ".ganache-negotiation")],
           7545, lambda: healthy("http://127.0.0.1:7545",
           {"jsonrpc": "2.0", "method": "eth_chainId", "params": [], "id": 1}), timeout=180)
-    # Pick a free web port so another project's Streamlit app is never mistaken for this one.
+    
     port = next((p for p in range(8501, 8521) if not occupied(p)), None)
     if port is None:
         raise RuntimeError("No free web port between 8501 and 8520.")

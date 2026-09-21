@@ -1,4 +1,4 @@
-"""Streamlit prototype UI. All execution and metrics live outside the UI."""
+
 import json
 import os
 import streamlit as st
@@ -95,7 +95,7 @@ if st.button(run_label, key="run_negotiation", disabled=not ready):
                     ids, agents=agents, rounds=n_rounds, max_cycle_length=max_loop_len,
                     max_bilateral_rounds=reply_rounds, seed=seed + index,
                     record_on_chain=record_on_chain, persist=True)
-                # Save session results before any optional conversation-file write.
+                
                 st.session_state.current_contracts.extend(records)
                 st.session_state.metrics.append(conversation.metrics)
                 st.session_state.conversation_log.extend(conversation)

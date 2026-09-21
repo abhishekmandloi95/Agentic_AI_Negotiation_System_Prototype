@@ -1,4 +1,4 @@
-"""Negotiation agents with explicit decisions and optional local LLM/RAG."""
+
 import json
 import os
 from jinja2 import Environment, StrictUndefined
@@ -55,7 +55,7 @@ class OllamaDecisionClient:
         return response.json()["response"]
 
 class OpenAIDecisionClient:
-    """OpenAI adapter using the same validated negotiation decisions."""
+    
     def __init__(self, model="gpt-5", api_key=None):
         self.model = model
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -86,7 +86,7 @@ class OpenAIDecisionClient:
         return choice["message"]["content"]
 
 class RuleDecisionClient:
-    """Deterministic baseline; does not model LLM or RAG effects."""
+    
     def invoke(self, inputs):
         return {"proposal_id": inputs["proposal"]["proposal_id"],
                 "action": "accept", "reason": "That works for me—it gives me resources I need."}
@@ -100,7 +100,7 @@ class LLMNegotiationAgent:
         validate_balances(needs)
         self.agent_id, self.style = agent_id, style
         self.inventory, self.needs = dict(inventory), dict(needs)
-        # Needs represent outstanding demand, separate from transferable inventory.
+        
         self.initial_needs = dict(needs)
         self.history, self.executed_proposals = [], set()
         self.market = market if market is not None else _MARKET
@@ -136,7 +136,7 @@ class LLMNegotiationAgent:
             "retrieved_memory": memories, "conversation_history": list(conversation)[-20:],
         }
         inputs["prompt"] = self._template.render(**inputs)
-        # A format repair is bounded; tool/network failures are reported by the protocol.
+        
         for attempt in range(2):
             raw = self.chain.invoke(inputs)
             try:
@@ -192,7 +192,7 @@ class LLMNegotiationAgent:
         return None
 
     def execute_trade(self, other, offer, request):
-        """Low-level caller-authorised exchange. Protocol uses explicit approvals instead."""
+        
         if not offer or not request:
             raise ValueError("Both sides of an exchange are required.")
         proposal = Proposal.create(

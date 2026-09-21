@@ -1,11 +1,11 @@
-"""Per-run outcome measurements derived from executed transactions."""
+
 from statistics import mean
 
 def fairness(values):
     values = sorted(values)
     total = sum(values)
     if not total:
-        return 0.0  # No fulfilled demand is not evidence of fair outcomes.
+        return 0.0  
     n = len(values)
     gini = sum((2 * i - n - 1) * x for i, x in enumerate(values, 1)) / (n * total)
     return 1 - gini
@@ -37,7 +37,7 @@ def summarize_run(agents, before, remaining_before, events, records):
     }
 
 def evaluate(logs=None, total_possible_utility=None):
-    """Summarize explicitly supplied run metrics; no cross-session global state."""
+    
     logs = list(logs or [])
     if not logs:
         return {}

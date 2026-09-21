@@ -1,4 +1,4 @@
-"""Directed trade cycles; prior bilateral acceptance never authorises a cycle."""
+
 from collections import defaultdict
 from negotiation.trades import Proposal, Transfer, execute_proposal
 
@@ -29,7 +29,7 @@ def find_trade_loops(agents, max_cycle_length=None):
             if neighbor == start and len(path) >= 1:
                 loop = path + [edge]
                 if len(loop) <= limit and all(loop[i][2] != loop[(i + 1) % len(loop)][2] for i in range(len(loop))):
-                    # Rotations preserve directed edges; reversal does not.
+                    
                     seen.add(min(tuple(loop[i:] + loop[:i]) for i in range(len(loop))))
             elif neighbor not in visited and len(path) + 1 < limit:
                 visit(start, neighbor, visited | {neighbor}, path + [edge])
@@ -56,7 +56,7 @@ def execute_loop(loop, id_map, *, proposal=None, approvals=None):
     return proposal.transfers[0].quantity
 
 def detect_and_execute_loops(agents, max_cycle_length=None, confirmed_pairs=None, *, approve=None):
-    """Compatibility helper. A callback must approve each exact cycle proposal."""
+    
     id_map = {a.agent_id: a for a in agents}
     results = []
     for loop in find_trade_loops(agents, max_cycle_length):

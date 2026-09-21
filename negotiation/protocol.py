@@ -1,4 +1,4 @@
-"""Explicit proposal/approval protocol; no execution inferred from prose."""
+
 import json
 import random
 from datetime import datetime, timezone
@@ -116,7 +116,7 @@ def _approve(proposal, agents_by_id, conversation, *, counteroffers=None, propos
                 _event(conversation, "decision", agent=aid, **decision)
                 _event(conversation, "counteroffer", agent=aid, proposal=counter.to_dict(),
                        message=_terms_message(counter, aid))
-                # Original approvals cannot carry across changed terms.
+                
                 return {}
             conversation.append(f"{aid}: {decision['action']} {proposal.proposal_id} — {decision['reason']}")
             _event(conversation, "decision", agent=aid, **decision)
@@ -223,7 +223,7 @@ def run_negotiation_simulation(loop_ids=None, agents=None, yaml_path="data/profi
     for _ in range(rounds):
         one_random_initiator_round(agents, pairs, max_bilateral_rounds, records,
                                    rng=rng, conversation=conversation)
-    # Bilateral results never authorise a cycle. Build and approve fresh terms.
+    
     for loop in find_trade_loops(agents, max_cycle_length):
         proposal = loop_proposal(loop, by_id)
         if proposal is None:
@@ -241,7 +241,7 @@ def run_negotiation_simulation(loop_ids=None, agents=None, yaml_path="data/profi
                 record["contract_address"] = recorder(record)
                 record["blockchain_status"] = "recorded"
             except Exception as exc:
-                # Off-chain execution stands; recording failure never executes again.
+                
                 record["blockchain_status"] = "failed"
                 record["blockchain_error"] = f"{type(exc).__name__}: {exc}"
                 conversation.append(f"SYSTEM: Blockchain recording failed for {record['proposal_id']}: {exc}")

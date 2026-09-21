@@ -1,4 +1,4 @@
-"""Paired, seeded scenarios with independent inventories and explicit warm-up."""
+
 import argparse
 import json
 import platform
@@ -41,7 +41,7 @@ def run_benchmark(runs=5, memory_enabled=False, prophet_enabled=False, engine="b
         warmup_seconds = perf_counter() - warmup_start
         memories = {a.agent_id: a.memory for a in warm_agents}
         agents = scenario(seed, memory_enabled, prophet_enabled, engine, memories)
-        # Separate feature warm-up from timed steady-state negotiations.
+        
         agents[0].market.context(["gold", "wood"])
         tracemalloc.start()
         start = perf_counter()

@@ -1,4 +1,4 @@
-"""Immutable proposals and validated, all-or-nothing in-memory transfers."""
+
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from uuid import uuid4
@@ -74,7 +74,7 @@ def execute_proposal(proposal, agents_by_id, approvals):
            for aid in proposal.participants):
         raise ValueError("Proposal has already been executed.")
     validate_proposal(proposal, agents_by_id)
-    # Prepare every new state before publishing any mutation.
+    
     inventories = {aid: dict(agents_by_id[aid].inventory) for aid in proposal.participants}
     needs = {aid: dict(agents_by_id[aid].needs) for aid in proposal.participants}
     histories = {aid: list(agents_by_id[aid].history) for aid in proposal.participants}

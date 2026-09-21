@@ -1,4 +1,4 @@
-"""Local JSON storage. Writes replace complete files under a process-local lock."""
+
 import json
 import os
 import tempfile

@@ -1,4 +1,4 @@
-"""Compile the new audit contract without replacing the legacy artifact."""
+
 import argparse
 import json
 from pathlib import Path

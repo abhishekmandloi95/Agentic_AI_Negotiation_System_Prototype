@@ -1,4 +1,4 @@
-"""Report setup/warm-up separately from steady-state Python allocations."""
+
 from experiments.benchmark import run_benchmark
 
 def profile_negotiation(memory_enabled=True, rounds=3, engine="ollama"):

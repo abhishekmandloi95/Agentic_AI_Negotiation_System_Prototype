@@ -93,7 +93,7 @@ class MarketInsightsService:
         if resource in self.history and not self.history[resource].empty:
             return
 
-        base = 80.0 + (int.from_bytes(hashlib.sha256(resource.encode()).digest()[:4], "big") % 40)  # deterministic 80..119
+        base = 80.0 + (int.from_bytes(hashlib.sha256(resource.encode()).digest()[:4], "big") % 40)  
         mu = 0.05
         sigma = 0.30
         dt = 1.0 / 365.0
@@ -201,7 +201,7 @@ class MarketInsightsService:
     def _forecast(self, resource, days_ahead):
         key = self._history_key(resource, days_ahead)
         if key not in self._forecast_cache:
-            # Keep only the current history version for each resource/horizon.
+            
             self._forecast_cache = {k: v for k, v in self._forecast_cache.items()
                                     if k[:2] != key[:2]}
             try:
@@ -214,7 +214,7 @@ class MarketInsightsService:
         return result.copy() if result is not None else None
 
     def get_forecast(self, resource: str, days_ahead: int = 5) -> Optional[pd.DataFrame]:
-        """Return the Prophet forecast, or None when forecasting is disabled."""
+        
         if not self._use_prophet:
             return None
         df = self.history.get(resource)
