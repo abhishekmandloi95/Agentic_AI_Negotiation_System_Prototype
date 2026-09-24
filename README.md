@@ -139,3 +139,10 @@ Requires the project's .venv, Ollama, Node.js/npx and an installed Ollama model.
 Ganache is downloaded by npx if needed. The existing ~/.ganache-negotiation database
 is preserved. Logs are under ~/Library/Logs/AgenticNegotiation. Select Ganache recording
 in the app when desired; starting the service does not enable recording automatically.
+
+## Authors
+
+- Abhishek Mandloi
+- Amrita Moyade
+
+This project was developed collaboratively as a research and learning prototype exploring multi-agent negotiation, contextual memory, forecasting, and blockchain-based audit records.
